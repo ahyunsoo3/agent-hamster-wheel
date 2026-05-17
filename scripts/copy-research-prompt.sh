@@ -114,6 +114,7 @@ build_prompt() {
   [[ -n "${base}" ]] || die "could not read base prompt from ${TEMPLATE_FILE}"
   [[ -s "${stack_file}" ]] || die "could not read stack block for: ${stack}"
 
+  printf '%s\n\n' 'Implement based on the following plan.'
   awk -v stack_file="${stack_file}" '
     /^\[TARGET TECH STACK\]$/ {
       while ((getline line < stack_file) > 0) {
