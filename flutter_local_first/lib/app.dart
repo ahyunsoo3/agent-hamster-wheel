@@ -105,8 +105,9 @@ class _NotesTabState extends State<_NotesTab> {
 
   void _bindNoteStream() {
     final q = _search.text.trim();
-    _noteStream =
-        q.isEmpty ? widget.notes.watchNotes() : widget.notes.watchSearchResults(_search.text);
+    _noteStream = q.isEmpty
+        ? widget.notes.watchNotes()
+        : widget.notes.watchSearchResults(q);
     setState(() {});
   }
 

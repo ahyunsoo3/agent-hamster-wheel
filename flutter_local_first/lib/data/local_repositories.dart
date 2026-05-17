@@ -5,6 +5,21 @@ import '../database/app_database.dart';
 import '../domain/folder.dart';
 import '../domain/note.dart';
 
+/// FTS5-backed note projection — shared by one-shot search and reactive watch.
+const _ftsNotesMatchSql = '''
+SELECT
+  n.id AS id,
+  n.title AS title,
+  n.content AS content,
+  n.created_at AS created_at,
+  n.updated_at AS updated_at,
+  n.folder_id AS folder_id
+FROM notes AS n
+INNER JOIN fts_notes ON fts_notes.rowid = n.rowid
+WHERE fts_notes MATCH ?
+ORDER BY bm25(fts_notes)
+''';
+
 /// Maps persistence rows to strictly typed domain models.
 Folder _folderFromRow(FolderRow row) => Folder(
       id: row.id,
@@ -52,6 +67,28 @@ String fts5PrefixQuery(String raw) {
   return tokens.map(escapeToken).join(' AND ');
 }
 
+Future<List<Note>> _hydrateNotesFromFtsRows(AppDatabase db, List<QueryRow> rows) async {
+  if (rows.isEmpty) return const [];
+
+  final ids = rows.map((r) => r.read<String>('id')).toList();
+  final tagRows =
+      await (db.select(db.noteTags)..where((t) => t.noteId.isIn(ids))).get();
+  final byNote = _tagsByNoteId(tagRows);
+
+  return rows.map((r) {
+    final id = r.read<String>('id');
+    return Note(
+      id: id,
+      title: r.read<String>('title'),
+      content: r.read<String>('content'),
+      createdAt: r.read<DateTime>('created_at'),
+      updatedAt: r.read<DateTime>('updated_at'),
+      tags: List.unmodifiable(List<String>.from(byNote[id] ?? const [])),
+      folderId: r.readNullable<String>('folder_id'),
+    );
+  }).toList(growable: false);
+}
+
 /// Local-first persistence API: async I/O only, reactive streams for lists.
 class NotesLocalRepository {
   NotesLocalRepository(this._db);
@@ -83,43 +120,12 @@ class NotesLocalRepository {
     if (fts.isEmpty) return [];
 
     final rows = await _db.customSelect(
-      '''
-SELECT
-  n.id AS id,
-  n.title AS title,
-  n.content AS content,
-  n.created_at AS created_at,
-  n.updated_at AS updated_at,
-  n.folder_id AS folder_id
-FROM notes AS n
-INNER JOIN fts_notes ON fts_notes.rowid = n.rowid
-WHERE fts_notes MATCH ?
-ORDER BY bm25(fts_notes)
-''',
+      _ftsNotesMatchSql,
       variables: [Variable.withString(fts)],
       readsFrom: {_db.notes},
     ).get();
 
-    if (rows.isEmpty) return [];
-
-    final ids = rows.map((r) => r.read<String>('id')).toList();
-    final tagRows = await (_db.select(_db.noteTags)
-          ..where((t) => t.noteId.isIn(ids)))
-        .get();
-    final byNote = _tagsByNoteId(tagRows);
-
-    return rows.map((r) {
-      final id = r.read<String>('id');
-      return Note(
-        id: id,
-        title: r.read<String>('title'),
-        content: r.read<String>('content'),
-        createdAt: r.read<DateTime>('created_at'),
-        updatedAt: r.read<DateTime>('updated_at'),
-        tags: List.unmodifiable(List<String>.from(byNote[id] ?? const [])),
-        folderId: r.readNullable<String>('folder_id'),
-      );
-    }).toList(growable: false);
+    return _hydrateNotesFromFtsRows(_db, rows);
   }
 
   /// Reacts to note / FTS-backed rows changing (insert/update/delete).
@@ -131,45 +137,12 @@ ORDER BY bm25(fts_notes)
 
     return _db
         .customSelect(
-          '''
-SELECT
-  n.id AS id,
-  n.title AS title,
-  n.content AS content,
-  n.created_at AS created_at,
-  n.updated_at AS updated_at,
-  n.folder_id AS folder_id
-FROM notes AS n
-INNER JOIN fts_notes ON fts_notes.rowid = n.rowid
-WHERE fts_notes MATCH ?
-ORDER BY bm25(fts_notes)
-''',
+          _ftsNotesMatchSql,
           variables: [Variable.withString(fts)],
           readsFrom: {_db.notes, _db.noteTags},
         )
         .watch()
-        .asyncMap((rows) async {
-          if (rows.isEmpty) return const <Note>[];
-
-          final ids = rows.map((r) => r.read<String>('id')).toList();
-          final tagRows = await (_db.select(_db.noteTags)
-                ..where((t) => t.noteId.isIn(ids)))
-              .get();
-          final byNote = _tagsByNoteId(tagRows);
-
-          return rows.map((r) {
-            final id = r.read<String>('id');
-            return Note(
-              id: id,
-              title: r.read<String>('title'),
-              content: r.read<String>('content'),
-              createdAt: r.read<DateTime>('created_at'),
-              updatedAt: r.read<DateTime>('updated_at'),
-              tags: List.unmodifiable(List<String>.from(byNote[id] ?? const [])),
-              folderId: r.readNullable<String>('folder_id'),
-            );
-          }).toList(growable: false);
-        });
+        .asyncMap((rows) => _hydrateNotesFromFtsRows(_db, rows));
   }
 
   Future<Note?> getNoteById(String id) async {
