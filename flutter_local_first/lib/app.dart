@@ -52,6 +52,10 @@ class _LocalFirstNotesAppState extends State<LocalFirstNotesApp> {
               StreamBuilder<List<Folder>>(
                 stream: _folders.watchFolders(),
                 builder: (context, snap) {
+                  if (snap.connectionState == ConnectionState.waiting &&
+                      !snap.hasData) {
+                    return const Center(child: CircularProgressIndicator());
+                  }
                   final folders = snap.data ?? const [];
                   return ListView.builder(
                     padding: const EdgeInsets.all(16),
@@ -104,16 +108,17 @@ class _NotesTabState extends State<_NotesTab> {
   }
 
   void _bindNoteStream() {
-    final q = _search.text.trim();
-    _noteStream = q.isEmpty
+    final qTrimmed = _search.text.trim();
+    final ftsQuery = fts5PrefixQuery(qTrimmed);
+    _noteStream = ftsQuery.isEmpty
         ? widget.notes.watchNotes()
-        : widget.notes.watchSearchResults(q);
+        : widget.notes.watchSearchResults(qTrimmed);
     setState(() {});
   }
 
   @override
   Widget build(BuildContext context) {
-    final q = _search.text;
+    final trimmedQuery = _search.text.trim();
 
     return Column(
       children: [
@@ -140,7 +145,7 @@ class _NotesTabState extends State<_NotesTab> {
               if (list.isEmpty) {
                 return Center(
                   child: Text(
-                    q.trim().isEmpty ? 'No notes yet' : 'No matches',
+                    trimmedQuery.isEmpty ? 'No notes yet' : 'No matches',
                   ),
                 );
               }

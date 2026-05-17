@@ -9,6 +9,13 @@ import 'package:local_first_notes/domain/note.dart';
 void main() {
   TestWidgetsFlutterBinding.ensureInitialized();
 
+  test('fts5PrefixQuery treats whitespace-only input as empty', () {
+    expect(fts5PrefixQuery(''), '');
+    expect(fts5PrefixQuery('   '), '');
+    expect(fts5PrefixQuery('\t\n'), '');
+    expect(fts5PrefixQuery('  hello '), isNotEmpty);
+  });
+
   test('CRUD + FTS5 search runs off main isolate contract', () async {
     final db = AppDatabase(NativeDatabase.memory());
     final notes = NotesLocalRepository(db);
