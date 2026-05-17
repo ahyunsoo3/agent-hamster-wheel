@@ -5,14 +5,15 @@ import 'data/local_repositories.dart';
 import 'domain/folder.dart';
 import 'domain/note.dart';
 
-/// Chooses full-list vs FTS stream using the same trimmed query + tokenizer as the repository.
+/// Chooses full-list vs FTS stream using the same trimmed query + tokenization as the repository.
 Stream<List<Note>> _notesStreamForSearchField(
   NotesLocalRepository repo,
   String rawSearchText,
 ) {
   final trimmed = rawSearchText.trim();
-  final ftsActive = fts5PrefixQuery(trimmed).isNotEmpty;
-  return ftsActive ? repo.watchSearchResults(trimmed) : repo.watchNotes();
+  return fts5HasSearchableTokens(trimmed)
+      ? repo.watchSearchResults(trimmed)
+      : repo.watchNotes();
 }
 
 /// Root widget; accepts [database] for tests / benchmarks.
@@ -142,7 +143,7 @@ class _NotesTabState extends State<_NotesTab> {
   @override
   Widget build(BuildContext context) {
     final qTrimmed = _search.text.trim();
-    final ftsQuery = fts5PrefixQuery(qTrimmed);
+    final ftsActive = fts5HasSearchableTokens(qTrimmed);
 
     return Column(
       children: [
@@ -169,7 +170,7 @@ class _NotesTabState extends State<_NotesTab> {
               if (list.isEmpty) {
                 return Center(
                   child: Text(
-                    ftsQuery.isNotEmpty ? 'No matches' : 'No notes yet',
+                    ftsActive ? 'No matches' : 'No notes yet',
                   ),
                 );
               }

@@ -145,4 +145,39 @@ The active application code lives under `flutter_local_first/` (package `local_f
 
 ---
 
+## 2026-05-18 — Session: shared FTS tokenization and cheaper UI search gating
+
+### Issue resolution
+
+No new user-visible defects were identified in this pass; **`flutter analyze`** and **`flutter test`** were clean prior to changes. This session removes redundant MATCH-string work on UI-driven paths and locks tokenization to one implementation.
+
+### Refactoring
+
+**`flutter_local_first/lib/data/local_repositories.dart`**
+
+- **`_ftsTokens`**: centralizes trim → split → filter pipeline used by both predicate checks and MATCH construction.
+- **`fts5HasSearchableTokens`**: public API aligned with “non-empty **`fts5PrefixQuery`**” for stream selection and empty-state copy without building escaped tokens.
+- **`fts5PrefixQuery`**: now delegates to **`_ftsTokens`** only.
+
+**`flutter_local_first/lib/app.dart`**
+
+- **`_notesStreamForSearchField`** and notes empty-state messaging use **`fts5HasSearchableTokens`** instead of **`fts5PrefixQuery(...).isNotEmpty`**.
+
+**Reasoning:** One tokenizer eliminates drift between “is search active?” and SQL MATCH generation; call sites that only need a boolean no longer pay escape/`join` allocations.
+
+### Optimization
+
+- **Strategy:** Skip **`_escapeFts5PrefixToken`** and **`join`** on every **`build`** and stream-bind when only deciding **`watchNotes`** vs **`watchSearchResults`** (repository still builds the MATCH string internally when searching).
+- **Benchmarks:** Not run; expected gain is lower allocation churn on keystrokes and frames, same SQL semantics.
+
+### Tests
+
+- **`repository_test.dart`:** asserts **`fts5HasSearchableTokens`** agrees with **`fts5PrefixQuery.isNotEmpty`** on representative inputs.
+
+### Current codebase state
+
+- **`flutter analyze`** clean; **`flutter test`** passes (4 tests).
+
+---
+
 _End of log (2026-05-18 session)._

@@ -58,13 +58,19 @@ String _escapeFts5PrefixToken(String t) {
   return '"$s"*';
 }
 
+/// Raw tokens after trim/split — single source of truth for UI gating and MATCH construction.
+List<String> _ftsTokens(String raw) => raw
+    .trim()
+    .split(_ftsWhitespaceSplitter)
+    .where((t) => t.isNotEmpty)
+    .toList();
+
+/// True when [raw] yields searchable FTS prefix tokens (equivalent to [fts5PrefixQuery] being non-empty).
+bool fts5HasSearchableTokens(String raw) => _ftsTokens(raw).isNotEmpty;
+
 /// Escapes user tokens for safe FTS5 prefix search (`token*`).
 String fts5PrefixQuery(String raw) {
-  final tokens = raw
-      .trim()
-      .split(_ftsWhitespaceSplitter)
-      .where((t) => t.isNotEmpty)
-      .toList();
+  final tokens = _ftsTokens(raw);
   if (tokens.isEmpty) return '';
 
   return tokens.map(_escapeFts5PrefixToken).join(' AND ');
