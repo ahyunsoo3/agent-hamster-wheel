@@ -20,23 +20,26 @@ WHERE fts_notes MATCH ?
 ORDER BY bm25(fts_notes)
 ''';
 
+/// Reused split pattern so tokenization avoids recompiling a [RegExp] per keystroke.
+final RegExp _ftsWhitespaceSplitter = RegExp(r'\s+');
+
 /// Maps persistence rows to strictly typed domain models.
 Folder _folderFromRow(FolderRow row) => Folder(
-      id: row.id,
-      name: row.name,
-      parentFolderId: row.parentFolderId,
-      sortOrder: row.sortOrder,
-    );
+  id: row.id,
+  name: row.name,
+  parentFolderId: row.parentFolderId,
+  sortOrder: row.sortOrder,
+);
 
 Note _noteFromRow(NoteRow row, List<String> tags) => Note(
-      id: row.id,
-      title: row.title,
-      content: row.content,
-      createdAt: row.createdAt,
-      updatedAt: row.updatedAt,
-      tags: List.unmodifiable(tags),
-      folderId: row.folderId,
-    );
+  id: row.id,
+  title: row.title,
+  content: row.content,
+  createdAt: row.createdAt,
+  updatedAt: row.updatedAt,
+  tags: List.unmodifiable(tags),
+  folderId: row.folderId,
+);
 
 Map<String, List<String>> _tagsByNoteId(List<NoteTagRow> tagRows) {
   final map = <String, List<String>>{};
@@ -53,7 +56,7 @@ Map<String, List<String>> _tagsByNoteId(List<NoteTagRow> tagRows) {
 String fts5PrefixQuery(String raw) {
   final tokens = raw
       .trim()
-      .split(RegExp(r'\s+'))
+      .split(_ftsWhitespaceSplitter)
       .where((t) => t.isNotEmpty)
       .toList();
   if (tokens.isEmpty) return '';
@@ -67,26 +70,32 @@ String fts5PrefixQuery(String raw) {
   return tokens.map(escapeToken).join(' AND ');
 }
 
-Future<List<Note>> _hydrateNotesFromFtsRows(AppDatabase db, List<QueryRow> rows) async {
+Future<List<Note>> _hydrateNotesFromFtsRows(
+  AppDatabase db,
+  List<QueryRow> rows,
+) async {
   if (rows.isEmpty) return const [];
 
   final ids = rows.map((r) => r.read<String>('id')).toList();
-  final tagRows =
-      await (db.select(db.noteTags)..where((t) => t.noteId.isIn(ids))).get();
+  final tagRows = await (db.select(
+    db.noteTags,
+  )..where((t) => t.noteId.isIn(ids))).get();
   final byNote = _tagsByNoteId(tagRows);
 
-  return rows.map((r) {
-    final id = r.read<String>('id');
-    return Note(
-      id: id,
-      title: r.read<String>('title'),
-      content: r.read<String>('content'),
-      createdAt: r.read<DateTime>('created_at'),
-      updatedAt: r.read<DateTime>('updated_at'),
-      tags: List.unmodifiable(List<String>.from(byNote[id] ?? const [])),
-      folderId: r.readNullable<String>('folder_id'),
-    );
-  }).toList(growable: false);
+  return rows
+      .map((r) {
+        final id = r.read<String>('id');
+        return Note(
+          id: id,
+          title: r.read<String>('title'),
+          content: r.read<String>('content'),
+          createdAt: r.read<DateTime>('created_at'),
+          updatedAt: r.read<DateTime>('updated_at'),
+          tags: List.unmodifiable(List<String>.from(byNote[id] ?? const [])),
+          folderId: r.readNullable<String>('folder_id'),
+        );
+      })
+      .toList(growable: false);
 }
 
 /// Local-first persistence API: async I/O only, reactive streams for lists.
@@ -96,9 +105,9 @@ class NotesLocalRepository {
   final AppDatabase _db;
 
   Stream<List<Note>> watchNotes() {
-    final notes$ = (_db.select(_db.notes)
-          ..orderBy([(t) => OrderingTerm.desc(t.updatedAt)]))
-        .watch();
+    final notes$ = (_db.select(
+      _db.notes,
+    )..orderBy([(t) => OrderingTerm.desc(t.updatedAt)])).watch();
 
     final tags$ = _db.select(_db.noteTags).watch();
 
@@ -108,7 +117,10 @@ class NotesLocalRepository {
       (noteRows, tagRows) {
         final byNote = _tagsByNoteId(tagRows);
         return noteRows
-            .map((r) => _noteFromRow(r, List<String>.from(byNote[r.id] ?? const [])))
+            .map(
+              (r) =>
+                  _noteFromRow(r, List<String>.from(byNote[r.id] ?? const [])),
+            )
             .toList(growable: false);
       },
     );
@@ -119,11 +131,13 @@ class NotesLocalRepository {
     final fts = fts5PrefixQuery(query);
     if (fts.isEmpty) return [];
 
-    final rows = await _db.customSelect(
-      _ftsNotesMatchSql,
-      variables: [Variable.withString(fts)],
-      readsFrom: {_db.notes},
-    ).get();
+    final rows = await _db
+        .customSelect(
+          _ftsNotesMatchSql,
+          variables: [Variable.withString(fts)],
+          readsFrom: {_db.notes},
+        )
+        .get();
 
     return _hydrateNotesFromFtsRows(_db, rows);
   }
@@ -146,19 +160,22 @@ class NotesLocalRepository {
   }
 
   Future<Note?> getNoteById(String id) async {
-    final row = await (_db.select(_db.notes)..where((t) => t.id.equals(id)))
-        .getSingleOrNull();
+    final row = await (_db.select(
+      _db.notes,
+    )..where((t) => t.id.equals(id))).getSingleOrNull();
     if (row == null) return null;
 
-    final tags = await (_db.select(_db.noteTags)
-          ..where((t) => t.noteId.equals(id)))
-        .get();
+    final tags = await (_db.select(
+      _db.noteTags,
+    )..where((t) => t.noteId.equals(id))).get();
     return _noteFromRow(row, tags.map((e) => e.tag).toList()..sort());
   }
 
   Future<void> upsertNote(Note note) async {
     await _db.transaction(() async {
-      await _db.into(_db.notes).insertOnConflictUpdate(
+      await _db
+          .into(_db.notes)
+          .insertOnConflictUpdate(
             NotesCompanion.insert(
               id: note.id,
               title: note.title,
@@ -169,9 +186,9 @@ class NotesLocalRepository {
             ),
           );
 
-      await (_db.delete(_db.noteTags)
-            ..where((t) => t.noteId.equals(note.id)))
-          .go();
+      await (_db.delete(
+        _db.noteTags,
+      )..where((t) => t.noteId.equals(note.id))).go();
 
       await _db.batch((b) {
         for (final tag in note.tags.toSet()) {
@@ -201,7 +218,9 @@ class FoldersLocalRepository {
   }
 
   Future<void> upsertFolder(Folder folder) async {
-    await _db.into(_db.folders).insertOnConflictUpdate(
+    await _db
+        .into(_db.folders)
+        .insertOnConflictUpdate(
           FoldersCompanion.insert(
             id: folder.id,
             name: folder.name,

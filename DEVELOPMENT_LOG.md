@@ -89,4 +89,32 @@ The active application code lives under `flutter_local_first/` (package `local_f
 
 ---
 
+## 2026-05-18 — Empty-state parity & FTS splitter reuse
+
+### Issue resolution
+
+**5. Notes tab empty copy keyed off trimmed text rather than FTS activation**
+
+- **Root cause:** When `fts5PrefixQuery` yielded no searchable tokens, the UI already fell back to `watchNotes()` (issue **#3**), but the placeholder string still tested `trimmedQuery.isEmpty`. Any non-empty trimmed field with an empty FTS predicate could still show **“No matches”** despite browsing the full list—contradicting the active stream semantics.
+- **Fix:** Drive copy from the same FTS predicate computed in **`build`**: **`ftsQuery.isNotEmpty ? 'No matches' : 'No notes yet'`** (aligned with `_bindNoteStream`’s `ftsQuery.isEmpty` branch).
+- **Files:** `flutter_local_first/lib/app.dart`
+
+### Refactoring
+
+**`flutter_local_first/lib/data/local_repositories.dart`**
+
+- **`_ftsWhitespaceSplitter`**: `RegExp(r'\s+')` instantiated once module-wide for `fts5PrefixQuery`.
+- Keeps tokenizer behavior identical while documenting intent next to FTS helpers.
+
+### Optimization
+
+- **Strategy:** Eliminate **`RegExp` construction on every **`fts5PrefixQuery` invocation** (search field **`onChanged`**, **`build`** recomputation). Saves compile work on hot keyboard paths without changing SQL semantics.
+- **Benchmarks:** Not measured; expectation is negligible wall-time savings but deterministic less allocation churn.
+
+### Current state
+
+- **`flutter analyze`** clean; **`flutter test`** passes.
+
+---
+
 _End of session entries._

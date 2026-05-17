@@ -118,7 +118,8 @@ class _NotesTabState extends State<_NotesTab> {
 
   @override
   Widget build(BuildContext context) {
-    final trimmedQuery = _search.text.trim();
+    final qTrimmed = _search.text.trim();
+    final ftsQuery = fts5PrefixQuery(qTrimmed);
 
     return Column(
       children: [
@@ -145,7 +146,7 @@ class _NotesTabState extends State<_NotesTab> {
               if (list.isEmpty) {
                 return Center(
                   child: Text(
-                    trimmedQuery.isEmpty ? 'No notes yet' : 'No matches',
+                    ftsQuery.isNotEmpty ? 'No matches' : 'No notes yet',
                   ),
                 );
               }
