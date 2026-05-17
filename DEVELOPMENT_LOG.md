@@ -117,4 +117,32 @@ The active application code lives under `flutter_local_first/` (package `local_f
 
 ---
 
-_End of session entries._
+## 2026-05-18 — Session: widget/repo lifecycle, stream helper, FTS escape hoist
+
+### Issue resolution
+
+**6. Injected database or repository changes could leave stale repository instances**
+
+- **Root cause:** `LocalFirstNotesApp` and `_NotesTab` constructed `NotesLocalRepository` / stream subscriptions only in `initState`. Replacing `database` or passing a new repository reference on rebuild (tests, benchmarks, or tooling) would keep listening through the old repos while the UI subtree updated—risking wrong data or leaked subscriptions tied to the wrong executor.
+- **Fix:** `LocalFirstNotesApp.didUpdateWidget` rebuilds `_notes` and `_folders` when `widget.database` identity changes; `_NotesTab.didUpdateWidget` recomputes `_noteStream` when `widget.notes` identity changes. Repository fields were changed from `late final` to assignable `late` so rebinding is legal.
+- **Files:** `flutter_local_first/lib/app.dart`
+
+**Research note:** Instantiating multiple `AppDatabase` subclasses in one isolate triggers Drift’s debug warning about multiple databases; widget tests that swap DBs without closing the prior instance would add noise. Hot-swapping is documented here for harness authors; closing the previous database before opening another avoids the warning.
+
+### Refactoring
+
+- **`_notesStreamForSearchField`** (top-level in `app.dart`): centralizes trimmed query handling and **`fts5PrefixQuery`** non-empty check so **`initState`**, **`didUpdateWidget`**, **`onChanged`**, and future call sites share one definition of “browse all notes” vs “FTS stream.”
+- **Reasoning:** Matches repository semantics (`watchSearchResults` only when FTS yields tokens) in a single place and reduces drift between stream wiring and empty-state copy (`ftsQuery` still computed in **`build`** for messaging only).
+
+### Optimization
+
+- **`_escapeFts5PrefixToken`** moved to module level in **`local_repositories.dart`** (replacing per-call nested **`escapeToken`**). Avoids allocating a new closure on every **`fts5PrefixQuery`** invocation on search **`onChanged`** / **`build`** paths; semantics unchanged.
+
+### Current codebase state
+
+- Flutter package **`local_first_notes`**: **`flutter analyze`** reports no issues; **`flutter test`** (repository + widget) passes.
+- Root **`DEVELOPMENT_LOG.md`** records engineering decisions through this session.
+
+---
+
+_End of log (2026-05-18 session)._

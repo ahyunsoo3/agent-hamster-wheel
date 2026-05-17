@@ -52,7 +52,13 @@ Map<String, List<String>> _tagsByNoteId(List<NoteTagRow> tagRows) {
   return map;
 }
 
-/// Escapes a user token for safe FTS5 prefix search (`token*`).
+String _escapeFts5PrefixToken(String t) {
+  var s = t.replaceAll('"', '""');
+  s = s.replaceAll("'", "''");
+  return '"$s"*';
+}
+
+/// Escapes user tokens for safe FTS5 prefix search (`token*`).
 String fts5PrefixQuery(String raw) {
   final tokens = raw
       .trim()
@@ -61,13 +67,7 @@ String fts5PrefixQuery(String raw) {
       .toList();
   if (tokens.isEmpty) return '';
 
-  String escapeToken(String t) {
-    var s = t.replaceAll('"', '""');
-    s = s.replaceAll("'", "''");
-    return '"$s"*';
-  }
-
-  return tokens.map(escapeToken).join(' AND ');
+  return tokens.map(_escapeFts5PrefixToken).join(' AND ');
 }
 
 Future<List<Note>> _hydrateNotesFromFtsRows(

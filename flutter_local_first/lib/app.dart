@@ -5,6 +5,16 @@ import 'data/local_repositories.dart';
 import 'domain/folder.dart';
 import 'domain/note.dart';
 
+/// Chooses full-list vs FTS stream using the same trimmed query + tokenizer as the repository.
+Stream<List<Note>> _notesStreamForSearchField(
+  NotesLocalRepository repo,
+  String rawSearchText,
+) {
+  final trimmed = rawSearchText.trim();
+  final ftsActive = fts5PrefixQuery(trimmed).isNotEmpty;
+  return ftsActive ? repo.watchSearchResults(trimmed) : repo.watchNotes();
+}
+
 /// Root widget; accepts [database] for tests / benchmarks.
 class LocalFirstNotesApp extends StatefulWidget {
   const LocalFirstNotesApp({super.key, required this.database});
@@ -16,14 +26,23 @@ class LocalFirstNotesApp extends StatefulWidget {
 }
 
 class _LocalFirstNotesAppState extends State<LocalFirstNotesApp> {
-  late final NotesLocalRepository _notes;
-  late final FoldersLocalRepository _folders;
+  late NotesLocalRepository _notes;
+  late FoldersLocalRepository _folders;
 
   @override
   void initState() {
     super.initState();
     _notes = NotesLocalRepository(widget.database);
     _folders = FoldersLocalRepository(widget.database);
+  }
+
+  @override
+  void didUpdateWidget(covariant LocalFirstNotesApp oldWidget) {
+    super.didUpdateWidget(oldWidget);
+    if (!identical(oldWidget.database, widget.database)) {
+      _notes = NotesLocalRepository(widget.database);
+      _folders = FoldersLocalRepository(widget.database);
+    }
   }
 
   @override
@@ -98,7 +117,15 @@ class _NotesTabState extends State<_NotesTab> {
   @override
   void initState() {
     super.initState();
-    _noteStream = widget.notes.watchNotes();
+    _noteStream = _notesStreamForSearchField(widget.notes, _search.text);
+  }
+
+  @override
+  void didUpdateWidget(covariant _NotesTab oldWidget) {
+    super.didUpdateWidget(oldWidget);
+    if (!identical(oldWidget.notes, widget.notes)) {
+      _noteStream = _notesStreamForSearchField(widget.notes, _search.text);
+    }
   }
 
   @override
@@ -108,11 +135,7 @@ class _NotesTabState extends State<_NotesTab> {
   }
 
   void _bindNoteStream() {
-    final qTrimmed = _search.text.trim();
-    final ftsQuery = fts5PrefixQuery(qTrimmed);
-    _noteStream = ftsQuery.isEmpty
-        ? widget.notes.watchNotes()
-        : widget.notes.watchSearchResults(qTrimmed);
+    _noteStream = _notesStreamForSearchField(widget.notes, _search.text);
     setState(() {});
   }
 
