@@ -1,8 +1,8 @@
 # Standardized Research Prompt Template
 
-This document defines the benchmark prompt used to evaluate local-first development ecosystems. Guide-generation workflows should pass this template to agents, filling in the `[TARGET TECH STACK]` section for each trial.
+This document mirrors the benchmark prompt used to evaluate local-first development ecosystems; the canonical copy lives in `scripts/copy-research-prompt.sh` (embedded heredocs). Guide-generation workflows should pass this template to agents, filling in the `[TARGET TECH STACK]` section for each trial.
 
-**Quick copy:** run `./scripts/copy-research-prompt.sh flutter` (or `react-native`, `tauri`, `template`) to copy the filled prompt to your clipboard. Use `--print` to print instead, or run with no arguments for an interactive menu.
+**Quick copy:** run `./scripts/copy-research-prompt.sh flutter` (or `react-native`, `tauri`, `template`) to copy the filled prompt to your clipboard. Use `--print` to print instead, `--file PATH` to parse another markdown file, or run with no arguments for an interactive menu.
 
 ## Base prompt
 

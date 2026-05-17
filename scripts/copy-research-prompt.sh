@@ -1,8 +1,9 @@
 #!/usr/bin/env bash
 # Copy the standardized research prompt to the clipboard, with an optional tech stack.
 #
-# Equivalent to copying prompts/standardized-research-prompt-template.md (base block)
-# with [TARGET TECH STACK] filled in for Flutter, React Native, or Tauri.
+# Canonical prompt text lives in this script (embedded below). The markdown file at
+# prompts/standardized-research-prompt-template.md mirrors it for documentation;
+# pass --file PATH to parse base + trial blocks from a different markdown file instead.
 #
 # Usage:
 #   ./scripts/copy-research-prompt.sh [stack]
@@ -20,7 +21,10 @@ set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 REPO_ROOT="$(cd "${SCRIPT_DIR}/.." && pwd)"
-TEMPLATE_FILE="${REPO_ROOT}/prompts/standardized-research-prompt-template.md"
+DEFAULT_TEMPLATE="${REPO_ROOT}/prompts/standardized-research-prompt-template.md"
+TEMPLATE_FILE="${DEFAULT_TEMPLATE}"
+# When 1 (default), use embedded_* prompts. When --file is passed, parse TEMPLATE_FILE with awk.
+USE_EMBEDDED_PROMPTS=1
 
 die() {
   echo "error: $*" >&2
@@ -50,15 +54,98 @@ Examples:
   $(basename "$0") --print react-native
   $(basename "$0") tauri
 
-Source reference (base prompt body):
-  @prompts/standardized-research-prompt-template.md (first text code block, lines 8-52)
+Source reference:
+  Embedded prompt definitions in this script (research_prompt_base / research_prompt_stack_*).
+  Markdown mirror: prompts/standardized-research-prompt-template.md
 EOF
 }
 
-[[ -f "${TEMPLATE_FILE}" ]] || die "template not found: ${TEMPLATE_FILE}"
+# --- Embedded canonical prompts (keep in sync with standardized-research-prompt-template.md) ---
+
+research_prompt_base() {
+  cat <<'EOF'
+Act as a Principal Software Engineer and System Architect. This prompt is part of a research benchmark evaluating local-first development ecosystems. Your task is to provide a complete, production-ready implementation of a local-first data layer based strictly on the specification below.
+
+[TARGET TECH STACK]
+- Framework & Language: [Insert e.g., "Flutter + Dart" OR "React Native + TypeScript" OR "React + Tauri + TypeScript"]
+- Recommended Local Database Engine: [Insert e.g., "Isar" OR "WatermelonDB" OR "RxDB/SQLite"]
+
+---
+
+1. FUNCTIONAL SPECIFICATION & DATA SCHEMA
+The implementation must strictly support the following data models and relationships:
+
+A. Note Model
+- id: String (Unique Identifier / UUID)
+- title: String
+- content: String (To be stored in a format optimized for text/markdown parsers)
+- createdAt: DateTime / Timestamp
+- updatedAt: DateTime / Timestamp
+- tags: List/Array of Strings
+- folderId: String (Nullable, referencing a Parent Folder)
+
+B. Folder Model
+- id: String (Unique Identifier)
+- name: String
+- parentFolderId: String (Nullable, supporting a self-referencing hierarchy)
+
+---
+
+2. ARCHITECTURAL REQUIREMENTS
+To ensure a fair cross-language comparison, your code implementation must provide:
+
+- Strict Type Safety: Provide full interface, class, or type definitions for all schemas and models.
+- Reactive UI Binding: Data operations must expose streams, observables, or reactive state triggers so the UI updates automatically when data changes.
+- Performance & Non-Blocking I/O: Database reads, writes, and searches must run asynchronously without blocking the main rendering thread.
+- Local Full-Text Search (FTS): Implement a query function utilizing the database engine's native indexing capabilities to execute a "search-as-you-type" query against both the 'title' and 'content' fields simultaneously.
+- Schema Migration Blueprint: A brief code structure showing how a database version upgrade (e.g., adding a new field) is cleanly handled locally.
+
+---
+
+3. EXPECTED OUTPUT
+Please structure your response with the following exact sections to facilitate comparative analysis:
+
+1. Dependencies Configuration: (e.g., pubspec.yaml, package.json, or Cargo.toml requirements).
+2. Database Schema & Model Definitions: Complete code with required database engine annotations/decorators.
+3. Repository / Service Layer Implementation: A clean class or set of functions providing full CRUD operations, reactive data stream exposure, and the Full-Text Search query.
+4. Database Initialization & Migration Example: The setup code demonstrating database instantiation and migration logic.
+EOF
+}
+
+research_prompt_stack_template() {
+  cat <<'EOF'
+[TARGET TECH STACK]
+- Framework & Language: [Insert e.g., "Flutter + Dart" OR "React Native + TypeScript" OR "React + Tauri + TypeScript"]
+- Recommended Local Database Engine: [Insert e.g., "Isar" OR "WatermelonDB" OR "RxDB/SQLite"]
+EOF
+}
+
+research_prompt_stack_flutter() {
+  cat <<'EOF'
+[TARGET TECH STACK]
+- Framework & Language: Flutter (Dart)
+- Recommended Local Database Engine: Isar (or Drift if relational approach is preferred)
+EOF
+}
+
+research_prompt_stack_react_native() {
+  cat <<'EOF'
+[TARGET TECH STACK]
+- Framework & Language: React Native (TypeScript / Expo-compatible)
+- Recommended Local Database Engine: WatermelonDB (or OP-SQLite)
+EOF
+}
+
+research_prompt_stack_tauri() {
+  cat <<'EOF'
+[TARGET TECH STACK]
+- Framework & Language: React + Tauri (TypeScript)
+- Recommended Local Database Engine: RxDB or Tauri-Plugin-SQL (SQLite)
+EOF
+}
 
 # First fenced \`\`\`text block in the file (base prompt).
-extract_base_prompt() {
+extract_base_prompt_from_file() {
   awk '
     /^```text$/ && base == 0 { in_base = 1; next }
     in_base && /^```$/ { exit }
@@ -67,7 +154,7 @@ extract_base_prompt() {
 }
 
 # Fenced \`\`\`text block under a trial heading (e.g. "### Trial 1: Flutter").
-extract_trial_block() {
+extract_trial_block_from_file() {
   local heading="$1"
   awk -v heading="${heading}" '
     $0 ~ heading { found = 1; next }
@@ -75,6 +162,14 @@ extract_trial_block() {
     found && in_block && /^```$/ { exit }
     found && in_block { print }
   ' "${TEMPLATE_FILE}"
+}
+
+extract_base_prompt() {
+  if [[ "${USE_EMBEDDED_PROMPTS}" -eq 1 ]]; then
+    research_prompt_base
+  else
+    extract_base_prompt_from_file
+  fi
 }
 
 normalize_stack() {
@@ -93,14 +188,21 @@ normalize_stack() {
 
 stack_block_for() {
   local stack="$1"
-  case "${stack}" in
-    template) echo "[TARGET TECH STACK]
-- Framework & Language: [Insert e.g., \"Flutter + Dart\" OR \"React Native + TypeScript\" OR \"React + Tauri + TypeScript\"]
-- Recommended Local Database Engine: [Insert e.g., \"Isar\" OR \"WatermelonDB\" OR \"RxDB/SQLite\"]" ;;
-    flutter) extract_trial_block "### Trial 1: Flutter" ;;
-    react-native) extract_trial_block "### Trial 2: React Native" ;;
-    tauri) extract_trial_block "### Trial 3: Tauri" ;;
-  esac
+  if [[ "${USE_EMBEDDED_PROMPTS}" -eq 1 ]]; then
+    case "${stack}" in
+      template) research_prompt_stack_template ;;
+      flutter) research_prompt_stack_flutter ;;
+      react-native) research_prompt_stack_react_native ;;
+      tauri) research_prompt_stack_tauri ;;
+    esac
+  else
+    case "${stack}" in
+      template) research_prompt_stack_template ;;
+      flutter) extract_trial_block_from_file "### Trial 1: Flutter" ;;
+      react-native) extract_trial_block_from_file "### Trial 2: React Native" ;;
+      tauri) extract_trial_block_from_file "### Trial 3: Tauri" ;;
+    esac
+  fi
 }
 
 build_prompt() {
@@ -111,7 +213,7 @@ build_prompt() {
   stack_file="$(mktemp "${TMPDIR:-/tmp}/research-prompt-stack.XXXXXX")"
   stack_block_for "${stack}" >"${stack_file}"
 
-  [[ -n "${base}" ]] || die "could not read base prompt from ${TEMPLATE_FILE}"
+  [[ -n "${base}" ]] || die "could not read base prompt (embedded or ${TEMPLATE_FILE})"
   [[ -s "${stack_file}" ]] || die "could not read stack block for: ${stack}"
 
   printf '%s\n\n' 'Implement based on the following plan.'
@@ -189,6 +291,7 @@ while [[ $# -gt 0 ]]; do
       shift
       [[ $# -gt 0 ]] || die "--file requires a path"
       TEMPLATE_FILE="$1"
+      USE_EMBEDDED_PROMPTS=0
       [[ -f "${TEMPLATE_FILE}" ]] || die "template not found: ${TEMPLATE_FILE}"
       shift
       ;;
@@ -221,7 +324,11 @@ fi
 
 if copy_to_clipboard "${PROMPT}"; then
   echo "Copied research prompt (${STACK}) to clipboard."
-  echo "Source: prompts/standardized-research-prompt-template.md (base block + Trial stack)"
+  if [[ "${USE_EMBEDDED_PROMPTS}" -eq 1 ]]; then
+    echo "Source: embedded prompt in scripts/copy-research-prompt.sh"
+  else
+    echo "Source: ${TEMPLATE_FILE} (parsed with awk)"
+  fi
 else
   echo "No clipboard tool found (pbcopy / wl-copy / xclip / xsel). Printing to stdout:" >&2
   printf '%s\n' "${PROMPT}"
