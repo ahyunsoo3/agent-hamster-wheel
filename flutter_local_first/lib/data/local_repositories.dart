@@ -7,21 +7,21 @@ import '../domain/note.dart';
 
 /// Maps persistence rows to strictly typed domain models.
 Folder _folderFromRow(FolderRow row) => Folder(
-      id: row.id,
-      name: row.name,
-      parentFolderId: row.parentFolderId,
-      sortOrder: row.sortOrder,
-    );
+  id: row.id,
+  name: row.name,
+  parentFolderId: row.parentFolderId,
+  sortOrder: row.sortOrder,
+);
 
 Note _noteFromRow(NoteRow row, List<String> tags) => Note(
-      id: row.id,
-      title: row.title,
-      content: row.content,
-      createdAt: row.createdAt,
-      updatedAt: row.updatedAt,
-      tags: List.unmodifiable(tags),
-      folderId: row.folderId,
-    );
+  id: row.id,
+  title: row.title,
+  content: row.content,
+  createdAt: row.createdAt,
+  updatedAt: row.updatedAt,
+  tags: List.unmodifiable(tags),
+  folderId: row.folderId,
+);
 
 Map<String, List<String>> _tagsByNoteId(List<NoteTagRow> tagRows) {
   final map = <String, List<String>>{};
@@ -32,6 +32,30 @@ Map<String, List<String>> _tagsByNoteId(List<NoteTagRow> tagRows) {
     entry.value.sort();
   }
   return map;
+}
+
+/// Converts raw FTS5 JOIN result rows into [Note] domain objects.
+///
+/// Accepts the query [rows] already retrieved from the database and the full
+/// [tagRows] for those notes. The shared mapper is used by both the one-shot
+/// [NotesLocalRepository.searchNotes] and the reactive
+/// [NotesLocalRepository.watchSearchResults] so the two paths can never drift.
+List<Note> _notesFromSearchRows(List<QueryRow> rows, List<NoteTagRow> tagRows) {
+  final byNote = _tagsByNoteId(tagRows);
+  return rows
+      .map((r) {
+        final id = r.read<String>('id');
+        return Note(
+          id: id,
+          title: r.read<String>('title'),
+          content: r.read<String>('content'),
+          createdAt: r.read<DateTime>('created_at'),
+          updatedAt: r.read<DateTime>('updated_at'),
+          tags: List.unmodifiable(List<String>.from(byNote[id] ?? const [])),
+          folderId: r.readNullable<String>('folder_id'),
+        );
+      })
+      .toList(growable: false);
 }
 
 /// Escapes a user token for safe FTS5 prefix search (`token*`).
@@ -59,9 +83,9 @@ class NotesLocalRepository {
   final AppDatabase _db;
 
   Stream<List<Note>> watchNotes() {
-    final notes$ = (_db.select(_db.notes)
-          ..orderBy([(t) => OrderingTerm.desc(t.updatedAt)]))
-        .watch();
+    final notes$ = (_db.select(
+      _db.notes,
+    )..orderBy([(t) => OrderingTerm.desc(t.updatedAt)])).watch();
 
     final tags$ = _db.select(_db.noteTags).watch();
 
@@ -71,7 +95,10 @@ class NotesLocalRepository {
       (noteRows, tagRows) {
         final byNote = _tagsByNoteId(tagRows);
         return noteRows
-            .map((r) => _noteFromRow(r, List<String>.from(byNote[r.id] ?? const [])))
+            .map(
+              (r) =>
+                  _noteFromRow(r, List<String>.from(byNote[r.id] ?? const [])),
+            )
             .toList(growable: false);
       },
     );
@@ -82,8 +109,9 @@ class NotesLocalRepository {
     final fts = fts5PrefixQuery(query);
     if (fts.isEmpty) return [];
 
-    final rows = await _db.customSelect(
-      '''
+    final rows = await _db
+        .customSelect(
+          '''
 SELECT
   n.id AS id,
   n.title AS title,
@@ -96,30 +124,18 @@ INNER JOIN fts_notes ON fts_notes.rowid = n.rowid
 WHERE fts_notes MATCH ?
 ORDER BY bm25(fts_notes)
 ''',
-      variables: [Variable.withString(fts)],
-      readsFrom: {_db.notes},
-    ).get();
+          variables: [Variable.withString(fts)],
+          readsFrom: {_db.notes},
+        )
+        .get();
 
     if (rows.isEmpty) return [];
 
     final ids = rows.map((r) => r.read<String>('id')).toList();
-    final tagRows = await (_db.select(_db.noteTags)
-          ..where((t) => t.noteId.isIn(ids)))
-        .get();
-    final byNote = _tagsByNoteId(tagRows);
-
-    return rows.map((r) {
-      final id = r.read<String>('id');
-      return Note(
-        id: id,
-        title: r.read<String>('title'),
-        content: r.read<String>('content'),
-        createdAt: r.read<DateTime>('created_at'),
-        updatedAt: r.read<DateTime>('updated_at'),
-        tags: List.unmodifiable(List<String>.from(byNote[id] ?? const [])),
-        folderId: r.readNullable<String>('folder_id'),
-      );
-    }).toList(growable: false);
+    final tagRows = await (_db.select(
+      _db.noteTags,
+    )..where((t) => t.noteId.isIn(ids))).get();
+    return _notesFromSearchRows(rows, tagRows);
   }
 
   /// Reacts to note / FTS-backed rows changing (insert/update/delete).
@@ -152,40 +168,30 @@ ORDER BY bm25(fts_notes)
           if (rows.isEmpty) return const <Note>[];
 
           final ids = rows.map((r) => r.read<String>('id')).toList();
-          final tagRows = await (_db.select(_db.noteTags)
-                ..where((t) => t.noteId.isIn(ids)))
-              .get();
-          final byNote = _tagsByNoteId(tagRows);
-
-          return rows.map((r) {
-            final id = r.read<String>('id');
-            return Note(
-              id: id,
-              title: r.read<String>('title'),
-              content: r.read<String>('content'),
-              createdAt: r.read<DateTime>('created_at'),
-              updatedAt: r.read<DateTime>('updated_at'),
-              tags: List.unmodifiable(List<String>.from(byNote[id] ?? const [])),
-              folderId: r.readNullable<String>('folder_id'),
-            );
-          }).toList(growable: false);
+          final tagRows = await (_db.select(
+            _db.noteTags,
+          )..where((t) => t.noteId.isIn(ids))).get();
+          return _notesFromSearchRows(rows, tagRows);
         });
   }
 
   Future<Note?> getNoteById(String id) async {
-    final row = await (_db.select(_db.notes)..where((t) => t.id.equals(id)))
-        .getSingleOrNull();
+    final row = await (_db.select(
+      _db.notes,
+    )..where((t) => t.id.equals(id))).getSingleOrNull();
     if (row == null) return null;
 
-    final tags = await (_db.select(_db.noteTags)
-          ..where((t) => t.noteId.equals(id)))
-        .get();
+    final tags = await (_db.select(
+      _db.noteTags,
+    )..where((t) => t.noteId.equals(id))).get();
     return _noteFromRow(row, tags.map((e) => e.tag).toList()..sort());
   }
 
   Future<void> upsertNote(Note note) async {
     await _db.transaction(() async {
-      await _db.into(_db.notes).insertOnConflictUpdate(
+      await _db
+          .into(_db.notes)
+          .insertOnConflictUpdate(
             NotesCompanion.insert(
               id: note.id,
               title: note.title,
@@ -196,9 +202,9 @@ ORDER BY bm25(fts_notes)
             ),
           );
 
-      await (_db.delete(_db.noteTags)
-            ..where((t) => t.noteId.equals(note.id)))
-          .go();
+      await (_db.delete(
+        _db.noteTags,
+      )..where((t) => t.noteId.equals(note.id))).go();
 
       await _db.batch((b) {
         for (final tag in note.tags.toSet()) {
@@ -228,7 +234,9 @@ class FoldersLocalRepository {
   }
 
   Future<void> upsertFolder(Folder folder) async {
-    await _db.into(_db.folders).insertOnConflictUpdate(
+    await _db
+        .into(_db.folders)
+        .insertOnConflictUpdate(
           FoldersCompanion.insert(
             id: folder.id,
             name: folder.name,

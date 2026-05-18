@@ -358,3 +358,36 @@ All regressions were corrected in a single pass:
 - `dart format` applied to all six edited files; six files changed.
 - `flutter analyze` completed with no issues.
 - `flutter test` completed successfully with all ten tests passing across `domain_copy_with_test.dart` (6), `repository_test.dart` (3), and `widget_test.dart` (1).
+
+## 2026-05-18 — Twelfth Review Pass
+
+### Session Restart
+
+Started a twelfth engineering review pass. All implementation files were re-read and verified to be in the correct state from the prior session (eleventh pass), with all fixes intact. The standard quality gates confirmed ten tests passing and no analyzer issues before any changes were made.
+
+### Issues Found
+
+No correctness bugs or runtime regressions were identified in this pass. The following structural and quality issues were found and addressed:
+
+### Refactoring: FTS Row-Mapping Deduplication
+
+- **Finding:** `NotesLocalRepository.searchNotes` and `watchSearchResults` both contained identical row-to-`Note` construction logic: extracting note IDs from the result set, querying tags for those IDs, building a `_tagsByNoteId` map, and constructing `Note` objects field-by-field. Any future addition to the `Note` domain model would require the same change in two places.
+- **Fix:** Extracted a private top-level function `_notesFromSearchRows(List<QueryRow> rows, List<NoteTagRow> tagRows)` that handles the shared mapping path. Both `searchNotes` and `watchSearchResults` now delegate to this function after fetching their respective tag rows.
+- **Architectural reasoning:** A single mapping path ensures the one-shot and reactive search results are structurally identical and eliminates the risk of the two paths drifting apart when domain fields change.
+
+### Optimization: Linter Rule Enforcement
+
+- **Finding:** `analysis_options.yaml` had `prefer_single_quotes` and `avoid_print` commented out as examples, leaving two coding conventions that the codebase already followed unenforced by the static analyzer.
+- **Fix:** Enabled `avoid_print: true` and `prefer_single_quotes: true` in the `linter.rules` section. One double-quoted string literal in `repository_test.dart` (line 112) was found to violate `prefer_single_quotes` and was corrected to a single-quoted string.
+- **Architectural reasoning:** Enforcing these rules at the analyzer level makes them machine-verified rather than documentation-only, preventing silent violations in future contributions.
+
+### Documentation: README Restored
+
+- **Finding:** `flutter_local_first/README.md` had regressed to the default Flutter template text, losing the project-specific architecture notes introduced in a prior pass.
+- **Fix:** Replaced the template with a comprehensive project-specific README documenting the source layout, FTS5 design decisions (external-content index, trigger recreation strategy, one-time repair marker), reactive stream architecture, and the `copyWith` sentinel pattern for nullable domain fields.
+
+### Twelfth-Pass Verification
+
+- `dart format lib/data/local_repositories.dart test/repository_test.dart` applied; one file changed.
+- `flutter analyze` completed with no issues.
+- `flutter test` completed successfully with all ten tests passing.

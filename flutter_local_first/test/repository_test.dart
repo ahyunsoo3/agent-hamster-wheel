@@ -109,7 +109,7 @@ void main() {
       expect(await notes.searchNotes('searchable'), hasLength(1));
 
       // Simulate a stale FTS state: clear the FTS table and remove the marker.
-      await db.customStatement("DELETE FROM fts_notes;");
+      await db.customStatement('DELETE FROM fts_notes;');
       await db.customStatement(
         "DELETE FROM app_metadata WHERE key = 'fts_rebuild_v1';",
       );
