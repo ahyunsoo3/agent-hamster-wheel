@@ -36,4 +36,46 @@ void main() {
 
     await db.close();
   });
+
+  test('FTS5 search index follows note updates and deletes', () async {
+    final db = AppDatabase(NativeDatabase.memory());
+    final notes = NotesLocalRepository(db);
+    final id = const Uuid().v4();
+    final now = DateTime.utc(2026, 5, 18);
+
+    await notes.upsertNote(
+      Note(
+        id: id,
+        title: 'Original keyword',
+        content: 'Draft body',
+        createdAt: now,
+        updatedAt: now,
+        tags: const ['sync'],
+        folderId: null,
+      ),
+    );
+
+    expect(await notes.searchNotes('original'), hasLength(1));
+
+    await notes.upsertNote(
+      Note(
+        id: id,
+        title: 'Updated keyword',
+        content: 'Published body',
+        createdAt: now,
+        updatedAt: now.add(const Duration(minutes: 1)),
+        tags: const ['sync'],
+        folderId: null,
+      ),
+    );
+
+    expect(await notes.searchNotes('updated'), hasLength(1));
+    expect(await notes.searchNotes('original'), isEmpty);
+
+    await notes.deleteNote(id);
+
+    expect(await notes.searchNotes('updated'), isEmpty);
+
+    await db.close();
+  });
 }
