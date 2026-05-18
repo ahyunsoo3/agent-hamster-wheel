@@ -182,3 +182,27 @@ Started a fourth engineering review pass after commit `0154325` was pushed. The 
 
 - Started formatting, static analysis, and test verification after adding the file-backed FTS repair marker test.
 - Verification passed: `dart format test/repository_test.dart`, `flutter analyze`, and `flutter test` completed successfully with six passing tests.
+
+## 2026-05-18 — Fifth Review Pass
+
+### Session Restart
+
+Started a fifth engineering review pass after commit `37d9bf4` was pushed. The repository is expected to include the FTS repair marker regression test. This pass will check the current state, review the latest test additions for robustness and cleanup behavior, and only make further changes if they reduce risk or clarify maintenance.
+
+### Fifth-Pass Findings
+
+- Confirmed the branch was aligned with `origin/result-flutter-gpt-5-5` at the start of this pass, with only this log modified.
+- Reviewed `repository_test.dart`, focusing on the file-backed FTS repair marker regression test added in the previous pass.
+- Found a test robustness issue: the temporary directory and open database are cleaned up only on the success path. Root cause: the test uses direct cleanup at the end of the body instead of `try/finally`, so a failing assertion could leave a SQLite file or open database resource behind.
+- Planned fix: wrap the file-backed test body in `try/finally`, track the current `AppDatabase`, close it defensively, and delete the temporary directory even when assertions fail.
+
+### Test Resource Cleanup Fix
+
+- Updated the file-backed FTS repair marker test to track the active `AppDatabase` as nullable state and wrap the test body in `try/finally`.
+- The test now closes any active database and deletes the temporary directory in the `finally` block, including assertion failure paths.
+- Technical reasoning: file-backed tests should not leak temporary SQLite files or native database handles when they fail, because leaks can obscure the original failure or affect later tests on the same worker.
+
+### Fifth-Pass Verification Started
+
+- Started formatting, static analysis, and test verification after hardening the file-backed test cleanup path.
+- Verification passed: `dart format test/repository_test.dart`, `flutter analyze`, and `flutter test` completed successfully with six passing tests.

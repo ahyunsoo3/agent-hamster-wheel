@@ -88,36 +88,40 @@ void main() {
     final file = File('${dir.path}/notes.sqlite');
     final id = const Uuid().v4();
     final now = DateTime.utc(2026, 5, 18, 1);
+    AppDatabase? db;
 
-    var db = AppDatabase(NativeDatabase(file));
-    var notes = NotesLocalRepository(db);
+    try {
+      db = AppDatabase(NativeDatabase(file));
+      var notes = NotesLocalRepository(db);
 
-    await notes.upsertNote(
-      Note(
-        id: id,
-        title: 'Repairable search term',
-        content: 'Body',
-        createdAt: now,
-        updatedAt: now,
-        tags: const [],
-        folderId: null,
-      ),
-    );
-    expect(await notes.searchNotes('repairable'), hasLength(1));
+      await notes.upsertNote(
+        Note(
+          id: id,
+          title: 'Repairable search term',
+          content: 'Body',
+          createdAt: now,
+          updatedAt: now,
+          tags: const [],
+          folderId: null,
+        ),
+      );
+      expect(await notes.searchNotes('repairable'), hasLength(1));
 
-    await db.customStatement("DELETE FROM fts_notes;");
-    await db.customStatement(
-      "DELETE FROM app_metadata WHERE key = 'fts_rebuild_v1';",
-    );
-    expect(await notes.searchNotes('repairable'), isEmpty);
-    await db.close();
+      await db.customStatement("DELETE FROM fts_notes;");
+      await db.customStatement(
+        "DELETE FROM app_metadata WHERE key = 'fts_rebuild_v1';",
+      );
+      expect(await notes.searchNotes('repairable'), isEmpty);
+      await db.close();
+      db = null;
 
-    db = AppDatabase(NativeDatabase(file));
-    notes = NotesLocalRepository(db);
+      db = AppDatabase(NativeDatabase(file));
+      notes = NotesLocalRepository(db);
 
-    expect(await notes.searchNotes('repairable'), hasLength(1));
-
-    await db.close();
-    await dir.delete(recursive: true);
+      expect(await notes.searchNotes('repairable'), hasLength(1));
+    } finally {
+      await db?.close();
+      await dir.delete(recursive: true);
+    }
   });
 }
