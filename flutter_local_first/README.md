@@ -1,17 +1,32 @@
-# local_first_notes
+# Local-First Notes
 
-A new Flutter project.
+Flutter reference app for a local-first notes data layer backed by Drift,
+SQLite, and FTS5.
 
-## Getting Started
+## Architecture
 
-This project is a starting point for a Flutter application.
+- `lib/database/` defines Drift tables, migrations, and SQLite FTS5 setup.
+- `lib/data/local_repositories.dart` exposes repository APIs for notes, folders,
+  tags, full-text search, and reactive lists.
+- `lib/domain/` contains persistence-independent `Note` and `Folder` models.
+- `lib/app.dart` wires the repositories into a small Material shell for manual
+  testing and benchmark smoke checks.
 
-A few resources to get you started if this is your first Flutter project:
+## Search Index Maintenance
 
-- [Learn Flutter](https://docs.flutter.dev/get-started/learn-flutter)
-- [Write your first Flutter app](https://docs.flutter.dev/get-started/codelab)
-- [Flutter learning resources](https://docs.flutter.dev/reference/learning-resources)
+Notes are indexed through an external-content FTS5 table. Database open performs
+cheap, idempotent repair of the virtual table and triggers. A full FTS rebuild
+runs only for fresh databases, schema upgrades, or databases missing the
+`fts_rebuild_v1` metadata marker.
 
-For help getting started with Flutter development, view the
-[online documentation](https://docs.flutter.dev/), which offers tutorials,
-samples, guidance on mobile development, and a full API reference.
+This keeps normal startup bounded while still repairing older or stale search
+indexes.
+
+## Verification
+
+Run the standard checks from this directory:
+
+```sh
+flutter analyze
+flutter test
+```

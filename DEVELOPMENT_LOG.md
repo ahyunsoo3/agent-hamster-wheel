@@ -230,3 +230,33 @@ Started a sixth engineering review pass after commit `fee4f62` was pushed. The r
 
 - Started formatting, static analysis, and test verification after hardening widget-test cleanup.
 - Verification passed: `dart format test/widget_test.dart`, `flutter analyze`, and `flutter test` completed successfully with six passing tests.
+
+## 2026-05-18 — Seventh Review Pass
+
+### Session Restart
+
+Started a seventh engineering review pass after commit `54c7ad7` was pushed. The repository is expected to include FTS repair, one-time rebuild optimization, app lifecycle cleanup, nullable copy semantics, and hardened test teardown. This pass will re-check branch state, scan project configuration and generated-code boundaries, and either document no further action or make any narrowly justified improvement.
+
+### Seventh-Pass Findings
+
+- Confirmed the branch was aligned with `origin/result-flutter-gpt-5-5` at the start of this pass, with only this log modified.
+- Reviewed `pubspec.yaml`, `analysis_options.yaml`, generated Drift code references in `app_database.g.dart`, and project Markdown inventory.
+- Confirmed generated Drift code reflects the hand-written table schema, including `Folders.sortOrder`; no generated-code mismatch was found.
+- Identified `flutter_local_first/README.md` as likely stale relative to the repaired FTS lifecycle and test coverage, so the next step is to review it for documentation drift.
+
+### Documentation Issue
+
+- Reviewed `flutter_local_first/README.md` and found it still contains the default Flutter starter text.
+- Root cause: the project evolved into a Drift-backed local-first notes reference app, but the README was never updated from the generated template.
+- Planned fix: replace the template README with a concise project-specific overview, architecture notes, FTS repair behavior, and verification commands.
+
+### README Refactor
+
+- Replaced the default Flutter README with a project-specific overview for the local-first notes reference app.
+- Documented the major source directories, repository/data-layer responsibilities, FTS5 repair strategy, and standard verification commands.
+- Architectural reasoning: the README now matches the app's actual purpose and gives future contributors enough context to understand why the database open path performs both cheap trigger repair and conditional full-index rebuilds.
+
+### Seventh-Pass Verification Started
+
+- Started final verification after the README refactor, including standard Flutter analyzer and test commands.
+- Verification passed: `flutter analyze` completed with no issues and `flutter test` completed successfully with six passing tests.
