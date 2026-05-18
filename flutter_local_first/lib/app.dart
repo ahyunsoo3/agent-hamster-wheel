@@ -69,35 +69,45 @@ class _LocalFirstNotesAppState extends State<LocalFirstNotesApp> {
           body: TabBarView(
             children: [
               _NotesTab(notes: _notes),
-              StreamBuilder<List<Folder>>(
-                stream: _folders.watchFolders(),
-                builder: (context, snap) {
-                  if (snap.connectionState == ConnectionState.waiting &&
-                      !snap.hasData) {
-                    return const Center(child: CircularProgressIndicator());
-                  }
-                  final folders = snap.data ?? const [];
-                  return ListView.builder(
-                    padding: const EdgeInsets.all(16),
-                    itemCount: folders.length,
-                    itemBuilder: (context, i) {
-                      final f = folders[i];
-                      return ListTile(
-                        title: Text(f.name),
-                        subtitle: Text(
-                          f.parentFolderId == null
-                              ? 'Root'
-                              : 'Parent: ${f.parentFolderId}',
-                        ),
-                      );
-                    },
-                  );
-                },
-              ),
+              _FoldersTab(folders: _folders),
             ],
           ),
         ),
       ),
+    );
+  }
+}
+
+class _FoldersTab extends StatelessWidget {
+  const _FoldersTab({required this.folders});
+
+  final FoldersLocalRepository folders;
+
+  @override
+  Widget build(BuildContext context) {
+    return StreamBuilder<List<Folder>>(
+      stream: folders.watchFolders(),
+      builder: (context, snap) {
+        if (snap.connectionState == ConnectionState.waiting && !snap.hasData) {
+          return const Center(child: CircularProgressIndicator());
+        }
+        final folderList = snap.data ?? const [];
+        return ListView.builder(
+          padding: const EdgeInsets.all(16),
+          itemCount: folderList.length,
+          itemBuilder: (context, i) {
+            final f = folderList[i];
+            return ListTile(
+              title: Text(f.name),
+              subtitle: Text(
+                f.parentFolderId == null
+                    ? 'Root'
+                    : 'Parent: ${f.parentFolderId}',
+              ),
+            );
+          },
+        );
+      },
     );
   }
 }
@@ -169,9 +179,7 @@ class _NotesTabState extends State<_NotesTab> {
               final list = snap.data ?? const [];
               if (list.isEmpty) {
                 return Center(
-                  child: Text(
-                    ftsActive ? 'No matches' : 'No notes yet',
-                  ),
+                  child: Text(ftsActive ? 'No matches' : 'No notes yet'),
                 );
               }
               return ListView.builder(

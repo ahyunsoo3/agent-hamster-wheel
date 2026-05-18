@@ -19,20 +19,23 @@ class AppDatabase extends _$AppDatabase {
 
   @override
   MigrationStrategy get migration => MigrationStrategy(
-        onCreate: (Migrator m) async {
-          await m.createAll();
-          await _installFts5(this);
-        },
-        onUpgrade: (Migrator m, int from, int to) async {
-          // Blueprint: additive schema change from v1 → v2.
-          if (from < 2) {
-            await m.addColumn(folders, folders.sortOrder);
-          }
-        },
-        beforeOpen: (details) async {
-          await customStatement('PRAGMA foreign_keys = ON;');
-        },
-      );
+    onCreate: (Migrator m) async {
+      await m.createAll();
+      await _installFts5(this);
+    },
+    onUpgrade: (Migrator m, int from, int to) async {
+      // Blueprint: additive schema change from v1 → v2.
+      if (from < 2) {
+        await m.addColumn(folders, folders.sortOrder);
+      }
+      // Idempotent: ensures FTS5 virtual table + sync triggers exist for DBs
+      // created before onCreate bundled _installFts5, or any partial upgrade.
+      await _installFts5(this);
+    },
+    beforeOpen: (details) async {
+      await customStatement('PRAGMA foreign_keys = ON;');
+    },
+  );
 
   /// FTS5 external-content index + triggers keep title/content searchable on the IO thread.
   static Future<void> _installFts5(GeneratedDatabase db) async {

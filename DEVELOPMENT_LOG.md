@@ -180,4 +180,36 @@ No new user-visible defects were identified in this pass; **`flutter analyze`** 
 
 ---
 
-_End of log (2026-05-18 session)._
+## 2026-05-18 — Session: upgrade-time FTS parity, folders tab composition
+
+### Issue resolution
+
+**7. Migrated databases could ship without FTS5 while fresh installs had full-text search**
+
+- **Root cause:** `MigrationStrategy.onUpgrade` only applied the v1→v2 column add (`folders.sortOrder`). `_installFts5` ran only from `onCreate`, so any existing file DB that reached the current schema solely through `onUpgrade` would never create `fts_notes` or the keep-in-sync triggers. Search would return no rows or behave inconsistently versus a new install.
+- **Fix:** After version-specific migrator steps, invoke **`await _installFts5(this)`**. All DDL uses `IF NOT EXISTS`, so repeat calls on later upgrades are harmless.
+- **Files:** `flutter_local_first/lib/database/app_database.dart`
+
+### Refactoring
+
+**`flutter_local_first/lib/app.dart`**
+
+- **`_FoldersTab`**: `StatelessWidget` that owns the folders **`StreamBuilder`**, list layout, and loading gate—parallel to **`_NotesTab`** owning notes UX.
+- **Reasoning:** `LocalFirstNotesApp.build` stays focused on shell/navigation; tab bodies scale independently without an oversized scaffold method.
+
+### Optimization
+
+- **Strategy:** Centralized, idempotent FTS provisioning on upgrade removes the need for ad hoc repair migrations or duplicate bootstrap logic elsewhere.
+- **Benchmarks:** Not measured; cost is negligible DDL guarded by `IF NOT EXISTS` at upgrade time.
+
+### Verification
+
+- **`dart format`** on touched Dart files; **`flutter analyze`** — no issues; **`flutter test`** — 4 tests passing.
+
+### Repository state after this session
+
+- Authoritative app package: **`flutter_local_first/`** (`local_first_notes`). Root log documents engineering decisions through **issue #7** and widget/migration refactors above.
+
+---
+
+_This log is the running record for **agent-hamster-wheel**; append new dated sections per session._
