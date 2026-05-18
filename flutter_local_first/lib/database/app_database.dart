@@ -43,14 +43,19 @@ class AppDatabase extends _$AppDatabase {
     GeneratedDatabase db, {
     required bool rebuild,
   }) async {
-    await db.customStatement('''
+    // All 8 DDL statements run in one explicit transaction so the entire FTS5
+    // schema installation incurs a single fsync instead of two implicit-
+    // transaction commits (for table + virtual-table creation) plus one
+    // explicit commit (for the trigger recreation).
+    await db.transaction(() async {
+      await db.customStatement('''
 CREATE TABLE IF NOT EXISTS app_metadata (
   key   TEXT PRIMARY KEY,
   value TEXT NOT NULL
 );
 ''');
 
-    await db.customStatement('''
+      await db.customStatement('''
 CREATE VIRTUAL TABLE IF NOT EXISTS fts_notes USING fts5(
   title,
   content,
@@ -59,10 +64,6 @@ CREATE VIRTUAL TABLE IF NOT EXISTS fts_notes USING fts5(
 );
 ''');
 
-    // Drop and recreate triggers in a single transaction so stale definitions
-    // are replaced atomically and the 6 DDL statements incur one fsync instead
-    // of six separate implicit-transaction commits.
-    await db.transaction(() async {
       await db.customStatement('DROP TRIGGER IF EXISTS notes_ai;');
       await db.customStatement('DROP TRIGGER IF EXISTS notes_ad;');
       await db.customStatement('DROP TRIGGER IF EXISTS notes_au;');

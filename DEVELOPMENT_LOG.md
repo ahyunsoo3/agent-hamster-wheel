@@ -662,3 +662,52 @@ Fresh full read of all 13 source files and all 4 test files completed. Quality g
 - `flutter analyze`: no issues (two passes — first found the `const` + `isAfter` incompatibility, second was clean after `const` removal).
 - `dart format`: 3 files reformatted on first run, 0 on second.
 - `flutter test --reporter expanded`: all 35 tests pass (29 prior + 6 new invariant tests).
+
+---
+
+## 2026-05-18 — Nineteenth Review Pass
+
+### Session Restart
+
+Full re-read of all 13 source files and 4 test files completed. Quality gates confirmed clean: `flutter analyze` no issues, 35/35 tests pass, `dart format` zero changes.
+
+### Issues Found
+
+#### Issue 1 — `_installFts5` runs two DDL statements as separate implicit transactions before the existing explicit transaction block
+
+- **File:** `lib/database/app_database.dart`, lines 46–60.
+- **Root cause:** `CREATE TABLE IF NOT EXISTS app_metadata` and `CREATE VIRTUAL TABLE IF NOT EXISTS fts_notes` are each issued as a standalone `customStatement` outside any explicit transaction. In SQLite, every statement outside an explicit transaction is automatically wrapped in its own implicit transaction, which requires a full fsync to the WAL or journal on disk. These two standalone DDL statements therefore cost two additional fsyncs at every database open, before the existing `db.transaction()` block (which already batches the six trigger DDL statements into one fsync). Consolidating all eight DDL statements — table creation, virtual table creation, and trigger recreation — into a single explicit transaction reduces the open-time DDL cost from three fsync boundaries to one.
+- **Fix:** Move the `CREATE TABLE IF NOT EXISTS app_metadata` and `CREATE VIRTUAL TABLE IF NOT EXISTS fts_notes` statements inside the existing `db.transaction()` block, reordering so the table and virtual-table creation come before the trigger drops and recreations.
+
+#### Issue 2 — `FoldersLocalRepository` has no `getFolderById` method; API is asymmetric with `NotesLocalRepository`
+
+- **File:** `lib/data/local_repositories.dart`.
+- **Root cause:** `NotesLocalRepository` exposes `getNoteById(String id) → Future<Note?>` for single-item lookups by primary key. `FoldersLocalRepository` has no equivalent `getFolderById`. Since both are reference implementation repositories used as examples of the local-first pattern, the asymmetry makes `FoldersLocalRepository` an incomplete API surface. Any caller needing a single folder by ID must filter the full `watchFolders()` stream, which is reactive and synchronously unavailable.
+- **Fix:** Add `getFolderById(String id) → Future<Folder?>` to `FoldersLocalRepository`.
+
+#### Issue 3 (Deferred) — Missing database indexes on `notes.updatedAt`, `notes.folderId`, and `folders.parentFolderId`
+
+- **Root cause:** `notes` is queried with `ORDER BY updated_at DESC`; `notes.folderId` and `folders.parentFolderId` are used for relational lookups and hierarchical traversal. None of these columns have explicit indexes — SQLite performs a full table scan for each. For a benchmark/reference app with small data, this is not a performance issue today. Adding indexes requires a schema version bump (`schemaVersion = 3`) and a corresponding `onUpgrade` migration.
+- **Decision:** Deferred. Documented here as a known future optimization to be addressed when the schema next requires a version bump for another reason. Combining an index migration with a schema-driven change avoids a migration that exists solely to add indexes.
+
+### Fixes Applied
+
+#### `lib/database/app_database.dart`
+
+- Consolidated all 8 `_installFts5` DDL statements — `CREATE TABLE IF NOT EXISTS app_metadata`, `CREATE VIRTUAL TABLE IF NOT EXISTS fts_notes`, and the 6 trigger `DROP`/`CREATE` statements — into a single `db.transaction()` block. Previously, the two table-creation statements were issued outside the transaction as standalone `customStatement` calls, each triggering its own implicit SQLite transaction and fsync. The consolidated single transaction reduces open-time DDL I/O from three fsync boundaries to one.
+
+#### `lib/data/local_repositories.dart`
+
+- Added `getFolderById(String id) → Future<Folder?>` to `FoldersLocalRepository`. Implementation mirrors `NotesLocalRepository.getNoteById`: single-row select with `.getSingleOrNull()`, mapped through `_folderFromRow`. This completes the API symmetry between the two repository classes.
+
+#### `test/repository_test.dart`
+
+- Added import for `package:local_first_notes/domain/folder.dart`.
+- Added `FoldersLocalRepository getFolderById returns null for unknown id` test.
+- Added `FoldersLocalRepository upsert and getFolderById round-trip` test: upserts a folder, verifies retrieval with value equality (exercising `Folder ==`), then updates via upsert and confirms the change.
+
+### Nineteenth-Pass Verification
+
+- `flutter analyze`: no issues.
+- `dart format`: 1 file changed (`test/repository_test.dart`), 0 on second run.
+- `flutter test --reporter expanded`: all 37 tests pass (35 prior + 2 new folder repository tests).

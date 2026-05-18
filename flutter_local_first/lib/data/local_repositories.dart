@@ -229,6 +229,13 @@ class FoldersLocalRepository {
         .map((rows) => rows.map(_folderFromRow).toList(growable: false));
   }
 
+  Future<Folder?> getFolderById(String id) async {
+    final row = await (_db.select(
+      _db.folders,
+    )..where((t) => t.id.equals(id))).getSingleOrNull();
+    return row == null ? null : _folderFromRow(row);
+  }
+
   Future<void> upsertFolder(Folder folder) async {
     await _db
         .into(_db.folders)

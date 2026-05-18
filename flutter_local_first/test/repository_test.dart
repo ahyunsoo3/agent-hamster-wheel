@@ -7,6 +7,7 @@ import 'package:uuid/uuid.dart';
 
 import 'package:local_first_notes/data/local_repositories.dart';
 import 'package:local_first_notes/database/app_database.dart';
+import 'package:local_first_notes/domain/folder.dart';
 import 'package:local_first_notes/domain/note.dart';
 
 void main() {
@@ -79,6 +80,37 @@ void main() {
     // Delete the note — all terms should leave the index.
     await notes.deleteNote(id);
     expect(await notes.searchNotes('revised'), isEmpty);
+
+    await db.close();
+  });
+
+  test(
+    'FoldersLocalRepository getFolderById returns null for unknown id',
+    () async {
+      final db = AppDatabase(NativeDatabase.memory());
+      final folders = FoldersLocalRepository(db);
+
+      expect(await folders.getFolderById('no-such-id'), isNull);
+
+      await db.close();
+    },
+  );
+
+  test('FoldersLocalRepository upsert and getFolderById round-trip', () async {
+    final db = AppDatabase(NativeDatabase.memory());
+    final folders = FoldersLocalRepository(db);
+
+    const folder = Folder(id: 'f1', name: 'Work', sortOrder: 2);
+    await folders.upsertFolder(folder);
+
+    final retrieved = await folders.getFolderById('f1');
+    expect(retrieved, isNotNull);
+    expect(retrieved, equals(folder));
+
+    // Update via upsert and confirm the change is reflected.
+    await folders.upsertFolder(folder.copyWith(name: 'Work — updated'));
+    final updated = await folders.getFolderById('f1');
+    expect(updated?.name, 'Work — updated');
 
     await db.close();
   });
