@@ -99,6 +99,10 @@ class _NotesTabState extends State<_NotesTab> {
   final TextEditingController _search = TextEditingController();
   late Stream<List<Note>> _noteStream;
 
+  // Tracks the query string that the current _noteStream was built for.
+  // An empty string means the browse stream (watchNotes) is active.
+  String _activeQuery = '';
+
   @override
   void initState() {
     super.initState();
@@ -113,9 +117,14 @@ class _NotesTabState extends State<_NotesTab> {
 
   void _bindNoteStream() {
     final q = _search.text.trim();
+    // Only rebuild the stream when the effective query string has changed.
+    // This prevents the StreamBuilder from resetting on every keystroke when
+    // the search mode (browse vs. search) or the query value is unchanged.
+    if (q == _activeQuery) return;
+    _activeQuery = q;
     _noteStream = q.isEmpty
         ? widget.notes.watchNotes()
-        : widget.notes.watchSearchResults(_search.text);
+        : widget.notes.watchSearchResults(q);
     setState(() {});
   }
 

@@ -59,6 +59,13 @@ List<Note> _notesFromSearchRows(List<QueryRow> rows, List<NoteTagRow> tagRows) {
 }
 
 /// Escapes a user token for safe FTS5 prefix search (`token*`).
+///
+/// Each whitespace-separated word is wrapped in double-quoted FTS5 phrase
+/// syntax (`"word"*`). A literal `"` inside a word is escaped as `""` per
+/// the FTS5 phrase syntax spec. Single quotes are ordinary characters inside
+/// FTS5 phrases and must NOT be doubled — that is a SQL string-literal escape
+/// that does not apply here because the query is always passed as a bound
+/// parameter, never interpolated into raw SQL.
 String fts5PrefixQuery(String raw) {
   final tokens = raw
       .trim()
@@ -67,13 +74,7 @@ String fts5PrefixQuery(String raw) {
       .toList();
   if (tokens.isEmpty) return '';
 
-  String escapeToken(String t) {
-    var s = t.replaceAll('"', '""');
-    s = s.replaceAll("'", "''");
-    return '"$s"*';
-  }
-
-  return tokens.map(escapeToken).join(' AND ');
+  return tokens.map((t) => '"${t.replaceAll('"', '""')}"*').join(' AND ');
 }
 
 /// Local-first persistence API: async I/O only, reactive streams for lists.

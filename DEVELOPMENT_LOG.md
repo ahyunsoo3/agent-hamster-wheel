@@ -391,3 +391,60 @@ No correctness bugs or runtime regressions were identified in this pass. The fol
 - `dart format lib/data/local_repositories.dart test/repository_test.dart` applied; one file changed.
 - `flutter analyze` completed with no issues.
 - `flutter test` completed successfully with all ten tests passing.
+
+## 2026-05-18 — Thirteenth Review Pass
+
+### Session Restart
+
+Started a thirteenth engineering review pass. Full re-read of all source files confirmed the codebase is in the correct state from the prior session. Standard quality gates verified: `flutter analyze` found no issues, and all ten tests pass (6 domain copy-with, 3 repository, 1 widget).
+
+### Issues Found
+
+#### Bug: `fts5PrefixQuery` incorrectly double-escapes single quotes
+
+- **File:** `lib/data/local_repositories.dart`, function `fts5PrefixQuery`.
+- **Root cause:** The `escapeToken` closure applies two substitutions to the raw token: `"` → `""` and `'` → `''`. The first is correct — inside an FTS5 double-quoted phrase, a literal `"` must be written as `""`. However, `'` → `''` is a SQL string-literal escape sequence, not an FTS5 escape sequence. Inside an FTS5 double-quoted phrase (i.e., between `"` and `"*`), there is no valid escape for single quotes — apostrophes are treated as ordinary characters by the FTS5 tokenizer. Doubling them produces `''` inside the phrase, which FTS5 tries to match as the literal string `''` rather than as a single apostrophe. This causes any search containing an apostrophe (e.g., `"it's"`, `"don't"`) to fail to find notes that contain those terms.
+- **Fix:** Remove the `s.replaceAll("'", "''")` line from `escapeToken`. The FTS5 query string is passed as a bound parameter (`Variable.withString`), so no SQL-level escaping is needed at all. Only the FTS5 phrase quoting (surrounding with `"..."*` and doubling internal double-quotes) is required.
+
+#### Issue: `_bindNoteStream` creates a new stream on every keystroke when mode is unchanged
+
+- **File:** `lib/app.dart`, `_NotesTabState._bindNoteStream`.
+- **Root cause:** Every call to `_bindNoteStream()` — triggered on every character typed or deleted — unconditionally reassigns `_noteStream` by calling either `watchNotes()` or `watchSearchResults()`. When the user is typing in the search field and the query is non-empty, each keystroke creates a new Drift `customSelect().watch()` stream. The `StreamBuilder` detects a new stream reference and resets to `ConnectionState.waiting`, briefly flashing a loading spinner before the first event arrives. The same unnecessary stream recreation happens when clearing the field one character at a time: `watchNotes()` is called repeatedly instead of once when the query first becomes empty.
+- **Fix:** Track the current search mode (`_isSearching`) and only rebind when the mode transitions between empty and non-empty, or when the query string changes while in search mode. This ensures each distinct query gets exactly one stream, and the browse/search mode toggle only creates new streams at the boundary.
+
+#### Dead code: `openLazyDatabaseFile` is unused
+
+- **File:** `lib/database/app_database.dart`, top-level function `openLazyDatabaseFile`.
+- **Root cause:** The function was added as a test/tooling helper for file-backed database access, but the actual file-backed test (`FTS5 repair marker triggers rebuild on next open`) creates its executor directly with `NativeDatabase(File(dbPath))`. The function is not referenced anywhere in the codebase.
+- **Fix:** Remove the function and its associated `dart:io` and `path` imports if they are no longer needed. (`dart:io` is still needed for the `File` type in the test, but `app_database.dart` no longer needs it directly.)
+
+### Bug Fix: `fts5PrefixQuery` single-quote escaping
+
+- Removed `s.replaceAll("'", "''")` from the `escapeToken` closure in `fts5PrefixQuery`. Single quotes are ordinary characters inside FTS5 double-quoted phrases and require no escaping. The `''` sequence is a SQL string-literal escape that is entirely inapplicable here because the FTS5 query is always passed as a bound `Variable.withString` parameter, not interpolated into raw SQL. The bug would cause any search query containing an apostrophe (e.g., `"don't"`, `"it's"`) to produce an FTS5 phrase that can never match any note.
+- Simplified `fts5PrefixQuery` to a single-expression map chain, removing the intermediate `escapeToken` local-function closure.
+- Removed an unnecessary `\"` escape in the string literal (`\"*` → `"*`) flagged by the `unnecessary_string_escapes` lint.
+
+### Fix: `_bindNoteStream` unnecessary stream recreation on every keystroke
+
+- Added `_activeQuery` state to `_NotesTabState` tracking the query string the current `_noteStream` was built for.
+- `_bindNoteStream` now short-circuits when `q == _activeQuery`, preventing a new Drift watch stream from being created on every keystroke when the effective query string has not changed.
+- As an additional correctness improvement, `watchSearchResults` now receives the trimmed query `q` rather than the raw `_search.text`, so leading/trailing whitespace in the search field cannot produce a different stream than the empty browse stream.
+- Technical reasoning: the previous implementation caused `StreamBuilder` to reset to `ConnectionState.waiting` on every character typed or deleted, potentially flashing a loading spinner and discarding already-loaded results unnecessarily.
+
+### Dead Code Removal: `openLazyDatabaseFile`
+
+- Removed the `openLazyDatabaseFile` top-level function from `app_database.dart`. The function was never called; the file-backed FTS repair marker test creates its database directly with `NativeDatabase(File(dbPath))`.
+- Removed the now-unused `import 'dart:io'` and `import 'package:path/path.dart' as p'` imports. Separately, removed the also-unused `import 'package:drift/native.dart'` that was uncovered by the analyzer after the function removal.
+
+### Test Coverage: `fts_query_test.dart`
+
+- Added `test/fts_query_test.dart` with 9 tests covering `fts5PrefixQuery` unit behaviour and an end-to-end FTS5 apostrophe-search scenario.
+- Unit tests cover: empty string, whitespace-only string, single-word phrase wrapping, multi-word AND joining, internal-whitespace collapsing, double-quote escaping, apostrophe preservation (the fixed bug), and multi-word apostrophe queries.
+- The end-to-end test inserts a note with `"Don't forget this"` as the title and `"It's important"` as the content, then verifies that `searchNotes("don't")` and `searchNotes("it's")` each return the note — directly proving the apostrophe bug is fixed.
+
+### Thirteenth-Pass Verification
+
+- `dart format` applied to all changed files; three files changed.
+- `flutter analyze` reported two issues during the first pass (unnecessary string escape and unused import), both fixed before committing.
+- `flutter analyze` on the second pass reported no issues.
+- `flutter test` completed successfully with all 19 tests passing: 6 domain copy-with, 3 repository, 9 fts_query (8 unit + 1 end-to-end), and 1 widget.
