@@ -1,5 +1,8 @@
+import 'dart:io';
+
 import 'package:drift/native.dart';
 import 'package:flutter_test/flutter_test.dart';
+import 'package:path/path.dart' as p;
 import 'package:uuid/uuid.dart';
 
 import 'package:local_first_notes/data/local_repositories.dart';
@@ -35,5 +38,95 @@ void main() {
     expect(hits, hasLength(1));
 
     await db.close();
+  });
+
+  test('FTS5 update and delete maintain index correctly', () async {
+    final db = AppDatabase(NativeDatabase.memory());
+    final notes = NotesLocalRepository(db);
+    final id = const Uuid().v4();
+    final now = DateTime.utc(2026, 5, 17);
+
+    await notes.upsertNote(
+      Note(
+        id: id,
+        title: 'Original title',
+        content: 'Original content',
+        createdAt: now,
+        updatedAt: now,
+        tags: const [],
+        folderId: null,
+      ),
+    );
+
+    expect(await notes.searchNotes('original'), hasLength(1));
+
+    // Update the note — old terms should leave the index, new terms should appear.
+    await notes.upsertNote(
+      Note(
+        id: id,
+        title: 'Revised title',
+        content: 'Revised content',
+        createdAt: now,
+        updatedAt: now.add(const Duration(seconds: 1)),
+        tags: const [],
+        folderId: null,
+      ),
+    );
+
+    expect(await notes.searchNotes('original'), isEmpty);
+    expect(await notes.searchNotes('revised'), hasLength(1));
+
+    // Delete the note — all terms should leave the index.
+    await notes.deleteNote(id);
+    expect(await notes.searchNotes('revised'), isEmpty);
+
+    await db.close();
+  });
+
+  test('FTS5 repair marker triggers rebuild on next open', () async {
+    final tmpDir = await Directory.systemTemp.createTemp('fts_repair_test_');
+    final dbPath = p.join(tmpDir.path, 'repair_test.sqlite');
+    AppDatabase? db;
+
+    try {
+      db = AppDatabase(NativeDatabase(File(dbPath)));
+      final notes = NotesLocalRepository(db);
+      final id = const Uuid().v4();
+      final now = DateTime.utc(2026, 5, 17);
+
+      await notes.upsertNote(
+        Note(
+          id: id,
+          title: 'Searchable note',
+          content: 'Some searchable content',
+          createdAt: now,
+          updatedAt: now,
+          tags: const [],
+          folderId: null,
+        ),
+      );
+
+      expect(await notes.searchNotes('searchable'), hasLength(1));
+
+      // Simulate a stale FTS state: clear the FTS table and remove the marker.
+      await db.customStatement("DELETE FROM fts_notes;");
+      await db.customStatement(
+        "DELETE FROM app_metadata WHERE key = 'fts_rebuild_v1';",
+      );
+
+      // After clearing, search should return nothing.
+      expect(await notes.searchNotes('searchable'), isEmpty);
+
+      await db.close();
+      db = null;
+
+      // Reopen — the missing marker should trigger an FTS rebuild.
+      db = AppDatabase(NativeDatabase(File(dbPath)));
+      final notes2 = NotesLocalRepository(db);
+      expect(await notes2.searchNotes('searchable'), hasLength(1));
+    } finally {
+      await db?.close();
+      await tmpDir.delete(recursive: true);
+    }
   });
 }

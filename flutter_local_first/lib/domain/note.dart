@@ -1,3 +1,6 @@
+/// Sentinel used by [Note.copyWith] to distinguish "omitted" from an explicit `null`.
+const _unset = Object();
+
 /// Domain model for a note. [content] is plain UTF-8 text suitable for Markdown parsers.
 class Note {
   const Note({
@@ -18,6 +21,8 @@ class Note {
   final List<String> tags;
   final String? folderId;
 
+  /// Pass [folderId] as `null` to explicitly clear the folder assignment.
+  /// Omit [folderId] entirely to keep the existing value.
   Note copyWith({
     String? id,
     String? title,
@@ -25,7 +30,7 @@ class Note {
     DateTime? createdAt,
     DateTime? updatedAt,
     List<String>? tags,
-    String? folderId,
+    Object? folderId = _unset,
   }) {
     return Note(
       id: id ?? this.id,
@@ -34,7 +39,9 @@ class Note {
       createdAt: createdAt ?? this.createdAt,
       updatedAt: updatedAt ?? this.updatedAt,
       tags: tags ?? this.tags,
-      folderId: folderId ?? this.folderId,
+      folderId: identical(folderId, _unset)
+          ? this.folderId
+          : folderId as String?,
     );
   }
 }

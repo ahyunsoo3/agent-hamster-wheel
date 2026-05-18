@@ -1,3 +1,6 @@
+/// Sentinel used by [Folder.copyWith] to distinguish "omitted" from an explicit `null`.
+const _unset = Object();
+
 /// Domain model for a hierarchical folder (decoupled from persistence rows).
 class Folder {
   const Folder({
@@ -14,16 +17,20 @@ class Folder {
   /// Example field introduced in schema v2 (see migrations).
   final int sortOrder;
 
+  /// Pass [parentFolderId] as `null` to explicitly move the folder to the root.
+  /// Omit [parentFolderId] entirely to keep the existing value.
   Folder copyWith({
     String? id,
     String? name,
-    String? parentFolderId,
+    Object? parentFolderId = _unset,
     int? sortOrder,
   }) {
     return Folder(
       id: id ?? this.id,
       name: name ?? this.name,
-      parentFolderId: parentFolderId ?? this.parentFolderId,
+      parentFolderId: identical(parentFolderId, _unset)
+          ? this.parentFolderId
+          : parentFolderId as String?,
       sortOrder: sortOrder ?? this.sortOrder,
     );
   }

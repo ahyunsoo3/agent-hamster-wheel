@@ -1,3 +1,5 @@
+import 'dart:async';
+
 import 'package:flutter/material.dart';
 
 import 'database/app_database.dart';
@@ -24,6 +26,12 @@ class _LocalFirstNotesAppState extends State<LocalFirstNotesApp> {
     super.initState();
     _notes = NotesLocalRepository(widget.database);
     _folders = FoldersLocalRepository(widget.database);
+  }
+
+  @override
+  void dispose() {
+    unawaited(widget.database.close());
+    super.dispose();
   }
 
   @override
@@ -105,8 +113,9 @@ class _NotesTabState extends State<_NotesTab> {
 
   void _bindNoteStream() {
     final q = _search.text.trim();
-    _noteStream =
-        q.isEmpty ? widget.notes.watchNotes() : widget.notes.watchSearchResults(_search.text);
+    _noteStream = q.isEmpty
+        ? widget.notes.watchNotes()
+        : widget.notes.watchSearchResults(_search.text);
     setState(() {});
   }
 
@@ -138,9 +147,7 @@ class _NotesTabState extends State<_NotesTab> {
               final list = snap.data ?? const [];
               if (list.isEmpty) {
                 return Center(
-                  child: Text(
-                    q.trim().isEmpty ? 'No notes yet' : 'No matches',
-                  ),
+                  child: Text(q.trim().isEmpty ? 'No notes yet' : 'No matches'),
                 );
               }
               return ListView.builder(
