@@ -212,4 +212,41 @@ No new user-visible defects were identified in this pass; **`flutter analyze`** 
 
 ---
 
+## 2026-05-18 — Session: codebase audit, repository clarity, regression coverage
+
+### Actions completed
+
+1. Ran **`flutter pub get`**, **`flutter analyze`**, and **`flutter test`** at `flutter_local_first/` — baseline clean (no analyzer issues; 4 passing tests prior to edits).
+2. Read through **`app.dart`**, **`local_repositories.dart`**, **`app_database.dart`**, **`bootstrap.dart`**, and test suites for reactive wiring, FTS5 contracts, migrations, and widget teardown hygiene.
+3. Applied a small readability tweak and expanded repository tests (see below).
+4. Re-ran **`flutter test`** / **`flutter analyze`** after edits — still clean; same number of **`test`** declarations (coverage extended inside the CRUD integration test).
+
+### Issue resolution
+
+No new functional defects surfaced in application code versus the narratives already documented for issues **#1–#7** above. FTS upgrade parity, UI stream selection against **`fts5HasSearchableTokens`**, **`didUpdateWidget` rebinding**, and widget-test **`db.close`** sequencing remain coherent on review.
+
+### Refactoring / maintainability
+
+**`flutter_local_first/lib/data/local_repositories.dart` — `NotesLocalRepository.getNoteById`**
+
+- **Change:** Rename the **`NoteTags` query result** to **`tagRows`**, derive **`tags`** as a sorted list variable, then call **`_noteFromRow`**.
+- **Reasoning:** Disambiguates Drift **`NoteTagRow`** rows from decoded tag strings (`tags` naming collision with domain “tags”). Behavior and **`List.unmodifiable`** wrapping via **`_noteFromRow`** are unchanged.
+
+### Tests
+
+**`flutter_local_first/test/repository_test.dart`**
+
+- After **`searchNotes`** assertions, **`getNoteById`** is exercised: confirms round-trip **`id`**, **lexicographically sorted tags** aligned with **`_tagsByNoteId`**, and **`UnsupportedError`** if callers attempt to **`add`** on the exposed **`Note.tags`** list (guards the unmodifiable contract).
+
+### Optimization
+
+No additional hot paths identified; keystroke optimizations from prior sessions (shared **`_ftsTokens`**, hoisted **`_escapeFts5PrefixToken`**, **`fts5HasSearchableTokens`** gating) remain the relevant strategy.
+
+### Current state
+
+- Package **`local_first_notes`**: **`flutter analyze`** reports no issues; **`flutter test`** passes (repository + widget).
+- **`DEVELOPMENT_LOG.md`**: consolidated session appended; root remains the engineering record for **agent-hamster-wheel**.
+
+---
+
 _This log is the running record for **agent-hamster-wheel**; append new dated sections per session._

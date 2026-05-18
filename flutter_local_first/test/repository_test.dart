@@ -16,16 +16,19 @@ void main() {
     expect(fts5PrefixQuery('  hello '), isNotEmpty);
   });
 
-  test('fts5HasSearchableTokens matches fts5PrefixQuery non-empty semantics', () {
-    bool agree(String s) =>
-        fts5HasSearchableTokens(s) == fts5PrefixQuery(s).isNotEmpty;
+  test(
+    'fts5HasSearchableTokens matches fts5PrefixQuery non-empty semantics',
+    () {
+      bool agree(String s) =>
+          fts5HasSearchableTokens(s) == fts5PrefixQuery(s).isNotEmpty;
 
-    expect(agree(''), isTrue);
-    expect(agree('   '), isTrue);
-    expect(agree('a'), isTrue);
-    expect(agree('  hello world '), isTrue);
-    expect(agree('\t \n'), isTrue);
-  });
+      expect(agree(''), isTrue);
+      expect(agree('   '), isTrue);
+      expect(agree('a'), isTrue);
+      expect(agree('  hello world '), isTrue);
+      expect(agree('\t \n'), isTrue);
+    },
+  );
 
   test('CRUD + FTS5 search runs off main isolate contract', () async {
     final db = AppDatabase(NativeDatabase.memory());
@@ -51,6 +54,11 @@ void main() {
 
     final hits = await notes.searchNotes('markdown');
     expect(hits, hasLength(1));
+
+    final byId = await notes.getNoteById(id);
+    expect(byId, isNotNull);
+    expect(byId!.tags, equals(const ['dart', 'spec']));
+    expect(() => byId.tags.add('x'), throwsUnsupportedError);
 
     await db.close();
   });

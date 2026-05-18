@@ -171,10 +171,11 @@ class NotesLocalRepository {
     )..where((t) => t.id.equals(id))).getSingleOrNull();
     if (row == null) return null;
 
-    final tags = await (_db.select(
+    final tagRows = await (_db.select(
       _db.noteTags,
     )..where((t) => t.noteId.equals(id))).get();
-    return _noteFromRow(row, tags.map((e) => e.tag).toList()..sort());
+    final tags = tagRows.map((e) => e.tag).toList()..sort();
+    return _noteFromRow(row, tags);
   }
 
   Future<void> upsertNote(Note note) async {
