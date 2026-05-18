@@ -172,7 +172,6 @@ class _NotesTabState extends State<_NotesTab> {
                         maxLines: 2,
                         overflow: TextOverflow.ellipsis,
                       ),
-                      isThreeLine: true,
                     ),
                   );
                 },

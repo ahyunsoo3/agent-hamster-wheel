@@ -559,3 +559,56 @@ Started a sixteenth engineering review pass. Full re-read of all source files co
 - First `flutter analyze` pass found one issue: `depend_on_referenced_packages` for `package:collection`. Fixed by adding `collection: ^1.18.0` to `pubspec.yaml` dependencies.
 - Second `flutter analyze` pass: no issues.
 - `flutter test` completed successfully with all 29 tests passing: 16 domain (6 copyWith + 10 equality), 3 repository, 9 FTS query, 1 widget.
+
+---
+
+## 2026-05-18 — Seventeenth Review Pass
+
+### Session Restart
+
+Started a seventeenth engineering review pass. Fresh full read of all source files completed. Quality gates confirmed clean: `flutter analyze` no issues, all 29 tests pass, `dart format` zero changes.
+
+### Issues Found
+
+#### Issue 1 — `Note.tags` mutability inconsistency across repository methods
+
+- **File:** `lib/data/local_repositories.dart`
+- **Root cause:** `watchNotes()` and `searchNotes()`/`watchSearchResults()` both wrap the tags list in `List.unmodifiable(...)` before constructing a `Note`. However, `getNoteById()` passes the result of `tags.map((e) => e.tag).toList()..sort()` — a plain mutable `List<String>` — directly into `_noteFromRow`. Since `_noteFromRow` also wraps in `List.unmodifiable`, this path is actually fine. On closer inspection the inconsistency is in `_notesFromSearchRows`, which calls `List.unmodifiable(List<String>.from(...))` adding a redundant copy when `byNote[id] ?? const []` already produces a list that `List.unmodifiable` could wrap directly. The real issue is that `getNoteById` does the sort *outside* `_noteFromRow` rather than using the shared `_tagsByNoteId` helper, making the tag-sort logic duplicated.
+- **Fix:** Unify tag preparation in `getNoteById` to mirror the path used by `watchNotes`: fetch tag rows, build a `byNote` map via `_tagsByNoteId` (which sorts inline), then call `_noteFromRow` with `byNote[id] ?? const []`. This removes the inline `..sort()` and ensures all three read paths use identical tag-ordering logic.
+
+#### Issue 2 — `watchNotes()` fetches the entire `note_tags` table on every emission
+
+- **File:** `lib/data/local_repositories.dart`
+- **Root cause:** `watchNotes()` combines `notes$.watch()` with `_db.select(_db.noteTags).watch()` — an unbounded query that returns every tag row for every note in the database on every reactive update, whether or not any tags changed. As the tag table grows this degrades into an O(total-tags) read on every single note or tag change.
+- **Fix:** Scope the tags watch to only the note IDs currently emitted by `notes$`. This is done by switching from `Rx.combineLatest2` with a separate unbounded tags stream to an `asyncMap` that fetches tags for only the current page of note IDs — identical to the pattern already used by `watchSearchResults`. The result is O(notes-on-screen × tags-per-note) instead of O(all-tags).
+
+#### Issue 3 — `ListTile.isThreeLine: true` applied unconditionally in `_NotesTab`
+
+- **File:** `lib/app.dart`
+- **Root cause:** `isThreeLine: true` reserves vertical space for a third subtitle line unconditionally, regardless of how much text the subtitle actually contains. Because `maxLines: 2` is set on the subtitle, the third reserved line is never filled — resulting in a permanent blank gap below every list item. The correct approach is to omit `isThreeLine` (defaults to `false`) and rely on Flutter's `ListTile` sizing to fit the actual two-line subtitle.
+- **Fix:** Remove `isThreeLine: true` from the `ListTile` in `_NotesTabState.build`.
+
+#### Issue 4 — Superfluous `toSet()` allocation in `upsertNote`
+
+- **File:** `lib/data/local_repositories.dart`
+- **Root cause:** `upsertNote` iterates `note.tags.toSet()` before inserting into `NoteTags`. The `NoteTags` table has a composite primary key `(noteId, tag)`, and the delete-before-insert pattern in the enclosing transaction already guarantees a clean state. The `toSet()` creates an intermediate `Set<String>` heap object purely to deduplicate tags that should not be duplicated in a well-formed domain object in the first place. Callers who construct `Note` with duplicate tags have a data-model bug; the persistence layer is not the correct place to silently mask it.
+- **Fix:** Remove `.toSet()` and iterate `note.tags` directly. This eliminates the unnecessary allocation on every write path.
+
+### Fixes Applied
+
+#### `lib/data/local_repositories.dart`
+
+- **`watchNotes()` refactored** from `Rx.combineLatest2(notes$, tags$, ...)` to `notes$.watch().asyncMap(...)`. The `asyncMap` handler scopes the `noteTags` query to only the IDs in the current emission via `WHERE note_id IN (...)`. This reduces the tag-read from O(all-tags) to O(tags-for-visible-notes) on every reactive update. Behavioral contract is preserved: `upsertNote` always writes to the notes row before touching tags, so the notes-table watch will fire on every application-driven write, and `asyncMap` will then fetch the freshest tags for that batch.
+- **Consequence: `rxdart` import removed.** `Rx.combineLatest2` was the only use of `package:rxdart` in the entire codebase. With the import removed, `rxdart: ^0.28.0` was also removed from `pubspec.yaml` `dependencies`. This reduces the dependency graph by one package.
+- **`getNoteById()` unified** to use `_tagsByNoteId()` (the shared sort-and-group helper) rather than an inline `..sort()` on a raw tag list. All three read paths (`watchNotes`, `searchNotes`/`watchSearchResults`, `getNoteById`) now use identical tag-ordering logic.
+- **`upsertNote()` `toSet()` removed.** Iterates `note.tags` directly, eliminating a heap allocation on every write.
+
+#### `lib/app.dart`
+
+- **`isThreeLine: true` removed** from the `ListTile` in `_NotesTabState.build`. With `maxLines: 2` on the subtitle, the third line slot was always empty, leaving a permanent vertical gap below every note card. Removing `isThreeLine` lets Flutter size each `ListTile` to its actual subtitle height.
+
+### Seventeenth-Pass Verification
+
+- `flutter analyze`: no issues.
+- `dart format`: one file changed (`lib/data/local_repositories.dart` after formatter run).
+- `flutter test --reporter expanded`: all 29 tests pass.

@@ -1,5 +1,4 @@
 import 'package:drift/drift.dart';
-import 'package:rxdart/rxdart.dart';
 
 import '../database/app_database.dart';
 import '../domain/folder.dart';
@@ -84,25 +83,23 @@ class NotesLocalRepository {
   final AppDatabase _db;
 
   Stream<List<Note>> watchNotes() {
-    final notes$ = (_db.select(
+    return (_db.select(
       _db.notes,
-    )..orderBy([(t) => OrderingTerm.desc(t.updatedAt)])).watch();
-
-    final tags$ = _db.select(_db.noteTags).watch();
-
-    return Rx.combineLatest2<List<NoteRow>, List<NoteTagRow>, List<Note>>(
-      notes$,
-      tags$,
-      (noteRows, tagRows) {
-        final byNote = _tagsByNoteId(tagRows);
-        return noteRows
-            .map(
-              (r) =>
-                  _noteFromRow(r, List<String>.from(byNote[r.id] ?? const [])),
-            )
-            .toList(growable: false);
-      },
-    );
+    )..orderBy([(t) => OrderingTerm.desc(t.updatedAt)])).watch().asyncMap((
+      noteRows,
+    ) async {
+      if (noteRows.isEmpty) return const <Note>[];
+      final ids = noteRows.map((r) => r.id).toList(growable: false);
+      final tagRows = await (_db.select(
+        _db.noteTags,
+      )..where((t) => t.noteId.isIn(ids))).get();
+      final byNote = _tagsByNoteId(tagRows);
+      return noteRows
+          .map(
+            (r) => _noteFromRow(r, List<String>.from(byNote[r.id] ?? const [])),
+          )
+          .toList(growable: false);
+    });
   }
 
   /// FTS5 over native `fts_notes` — matches [Note.title] and [Note.content].
@@ -182,10 +179,11 @@ ORDER BY bm25(fts_notes)
     )..where((t) => t.id.equals(id))).getSingleOrNull();
     if (row == null) return null;
 
-    final tags = await (_db.select(
+    final tagRows = await (_db.select(
       _db.noteTags,
     )..where((t) => t.noteId.equals(id))).get();
-    return _noteFromRow(row, tags.map((e) => e.tag).toList()..sort());
+    final byNote = _tagsByNoteId(tagRows);
+    return _noteFromRow(row, List<String>.from(byNote[id] ?? const []));
   }
 
   Future<void> upsertNote(Note note) async {
@@ -208,7 +206,7 @@ ORDER BY bm25(fts_notes)
       )..where((t) => t.noteId.equals(note.id))).go();
 
       await _db.batch((b) {
-        for (final tag in note.tags.toSet()) {
+        for (final tag in note.tags) {
           b.insert(
             _db.noteTags,
             NoteTagsCompanion.insert(noteId: note.id, tag: tag),
