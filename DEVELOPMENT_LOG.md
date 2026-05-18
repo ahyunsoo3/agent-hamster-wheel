@@ -249,4 +249,41 @@ No additional hot paths identified; keystroke optimizations from prior sessions 
 
 ---
 
+## 2026-05-18 — Session: folders stream lifecycle, folders repository coverage
+
+### Actions completed
+
+1. **`flutter pub get`**, **`flutter analyze`**, and **`flutter test`** on **`flutter_local_first/`** — clean baseline (working tree aligned with **`origin/result-flutter-composer-2-0`** before edits below).
+2. Reviewed **`app.dart`** tab widgets against **`StreamBuilder`** / Drift **`watch`** usage parity with **`_NotesTab`**.
+3. Converted **`_FoldersTab`** to **`StatefulWidget`**, cached **`watchFolders()`** in state, **`didUpdateWidget`** when **`folders`** repository identity changes (mirrors **`_NotesTab` / `_NotesTabState`** injection pattern).
+4. Added **`FoldersLocalRepository`** integration test (**name sort order**, empty-first emission contract).
+5. **`dart format`**, **`flutter analyze`**, **`flutter test`** — 5 **`test`** cases passing (prior session had **4** at the counters; one new **`test`** block added).
+
+### Issue resolution — **8. Folder list stream reconstructed on every rebuild**
+
+- **Symptom / risk:** **`_FoldersTab`** (previously **`StatelessWidget`**) passed **`folders.watchFolders()`** directly into **`StreamBuilder`** from **`build`**. Parent rebuilds (tab controller, theme, etc.) yielded a fresh **`Stream` instance** whenever Drift rebuilds that pipeline. **`StreamBuilder`** treats a changed **`stream` argument as a new subscription**, so listeners could churn every frame subtree rebuild—wasted work and a risk of UI flicker or missed emissions during rapid teardown/resubscribe.
+- **Fix:** Preserve a single **`late Stream<List<Folder>> _folderStream`**, initialized in **`initState`**, swapped in **`didUpdateWidget`** when **`widget.folders`** is not **`identical`** to the old widget’s repository (same contract as notes when **`AppDatabase`** is hot-swapped in tests).
+- **File:** **`flutter_local_first/lib/app.dart`**
+
+### Refactoring / architecture
+
+- **`_FoldersTab` / `_FoldersTabState`** now mirror **`_NotesTab`**: ephemeral **`build`** avoids owning long-lived async resources; **`State`** holds the **`watch`** subscription target.
+- **Reasoning:** One stable stream identity per logical subscription keeps reactive SQL invalidation deterministic and aligns both tabs under the same maintenance story.
+
+### Tests
+
+- **`flutter_local_first/test/repository_test.dart`:** **`Folders repository streams rows ordered by name`** — inserts **`Beta`** then **`Alpha`**, asserts first snapshot after writes is **`['Alpha','Beta']`**, validating **`orderBy([(t) => OrderingTerm.asc(t.name)])`** and **`watch`** wiring without the UI layer.
+
+### Optimization
+
+- **Strategy:** Stable **`watchFolders()`** reference eliminates redundant **`StreamBuilder` cancel/resubscribe** cycles on benign rebuilds; Drift retains one listener until the repo or subtree intentionally changes.
+- **Benchmarks:** Not run; expectation is fewer native query listener churn events when **`MaterialApp` / scaffold** subtree rebuilds.
+
+### Current state
+
+- **`flutter analyze`** reports no issues; **`flutter test`** passes (repository + widget).
+- Engineering record updated through **issue #8**.
+
+---
+
 _This log is the running record for **agent-hamster-wheel**; append new dated sections per session._

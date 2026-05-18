@@ -78,15 +78,36 @@ class _LocalFirstNotesAppState extends State<LocalFirstNotesApp> {
   }
 }
 
-class _FoldersTab extends StatelessWidget {
+class _FoldersTab extends StatefulWidget {
   const _FoldersTab({required this.folders});
 
   final FoldersLocalRepository folders;
 
   @override
+  State<_FoldersTab> createState() => _FoldersTabState();
+}
+
+class _FoldersTabState extends State<_FoldersTab> {
+  late Stream<List<Folder>> _folderStream;
+
+  @override
+  void initState() {
+    super.initState();
+    _folderStream = widget.folders.watchFolders();
+  }
+
+  @override
+  void didUpdateWidget(covariant _FoldersTab oldWidget) {
+    super.didUpdateWidget(oldWidget);
+    if (!identical(oldWidget.folders, widget.folders)) {
+      _folderStream = widget.folders.watchFolders();
+    }
+  }
+
+  @override
   Widget build(BuildContext context) {
     return StreamBuilder<List<Folder>>(
-      stream: folders.watchFolders(),
+      stream: _folderStream,
       builder: (context, snap) {
         if (snap.connectionState == ConnectionState.waiting && !snap.hasData) {
           return const Center(child: CircularProgressIndicator());

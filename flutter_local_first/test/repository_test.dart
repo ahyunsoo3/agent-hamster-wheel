@@ -4,6 +4,7 @@ import 'package:uuid/uuid.dart';
 
 import 'package:local_first_notes/data/local_repositories.dart';
 import 'package:local_first_notes/database/app_database.dart';
+import 'package:local_first_notes/domain/folder.dart';
 import 'package:local_first_notes/domain/note.dart';
 
 void main() {
@@ -29,6 +30,24 @@ void main() {
       expect(agree('\t \n'), isTrue);
     },
   );
+
+  test('Folders repository streams rows ordered by name', () async {
+    final db = AppDatabase(NativeDatabase.memory());
+    final folders = FoldersLocalRepository(db);
+    final idA = const Uuid().v4();
+    final idB = const Uuid().v4();
+
+    expect(await folders.watchFolders().first, isEmpty);
+
+    await folders.upsertFolder(Folder(id: idB, name: 'Beta', sortOrder: 1));
+    await folders.upsertFolder(Folder(id: idA, name: 'Alpha', sortOrder: 0));
+
+    final list = await folders.watchFolders().first;
+    expect(list, hasLength(2));
+    expect(list.map((f) => f.name).toList(), ['Alpha', 'Beta']);
+
+    await db.close();
+  });
 
   test('CRUD + FTS5 search runs off main isolate contract', () async {
     final db = AppDatabase(NativeDatabase.memory());
