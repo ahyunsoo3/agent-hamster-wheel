@@ -113,6 +113,9 @@ class _FoldersTabState extends State<_FoldersTab> {
           return const Center(child: CircularProgressIndicator());
         }
         final folderList = snap.data ?? const [];
+        if (folderList.isEmpty) {
+          return const Center(child: Text('No folders yet'));
+        }
         return ListView.builder(
           padding: const EdgeInsets.all(16),
           itemCount: folderList.length,

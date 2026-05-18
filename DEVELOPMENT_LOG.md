@@ -318,4 +318,41 @@ No new runtime or analyzer defects were observed relative to the fixes already d
 
 ---
 
+## 2026-05-18 — Session: folders empty state, searchNotes dependency parity
+
+### Actions completed
+
+1. Ran **`flutter pub get`**, **`flutter analyze`**, and **`flutter test`** on **`flutter_local_first/`** — clean baseline (5 tests passing) before edits.
+2. Compared **`_FoldersTab`** and **`_NotesTab`** empty UX: folders used a zero-item **`ListView`** with no copy when the DB had no rows.
+3. Implemented empty-folder messaging, aligned **`searchNotes`** `readsFrom` with hydration, extended the widget test, and re-ran **`flutter analyze`** / **`flutter test`** — all green.
+
+### Issue resolution — **9. Folders tab showed a blank list for an empty database**
+
+- **Root cause:** After the loading spinner, **`StreamBuilder`** always built **`ListView.builder`** with **`itemCount: 0`**, so users saw an empty scroll surface with no explanation, unlike the notes tab’s **“No notes yet”** affordance.
+- **Fix:** When the first resolved list is empty, show **`Center(Text('No folders yet'))`** (same pattern as notes: loading gate first, then empty vs populated).
+- **Files:** **`flutter_local_first/lib/app.dart`**
+
+### Refactoring / API accuracy
+
+**`flutter_local_first/lib/data/local_repositories.dart` — `NotesLocalRepository.searchNotes`**
+
+- **Change:** `customSelect` **`readsFrom`** now includes **`_db.noteTags`** in addition to **`_db.notes`**, matching **`watchSearchResults`** and the fact that **`_hydrateNotesFromFtsRows`** always loads tags.
+- **Reasoning:** Declares the full table dependency set for Drift’s query metadata and keeps one-shot search consistent with streamed search for future analyzer/runtime features that interpret `readsFrom`.
+
+### Optimization
+
+- No throughput-oriented change; empty-state branch is **`O(1)`** UI work on top of the same stream emissions.
+- **Benchmarks:** Not run.
+
+### Tests
+
+- **`flutter_local_first/test/widget_test.dart`:** renamed scenario to **`LocalFirstNotesApp shows empty state on notes and folders tabs`**; after the notes assertion, taps **`Folders`** and expects **`No folders yet`**. Uses **`package:flutter/material.dart`** so tab taps resolve against **`TabBar`** / **`Material`** semantics from the harness.
+
+### Current state
+
+- **`flutter analyze`**: no issues; **`flutter test`**: 5 tests passing.
+- Engineering record updated through **issue #9**.
+
+---
+
 _This log is the running record for **agent-hamster-wheel**; append new dated sections per session._

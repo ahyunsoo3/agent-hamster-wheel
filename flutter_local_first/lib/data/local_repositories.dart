@@ -143,7 +143,7 @@ class NotesLocalRepository {
         .customSelect(
           _ftsNotesMatchSql,
           variables: [Variable.withString(fts)],
-          readsFrom: {_db.notes},
+          readsFrom: {_db.notes, _db.noteTags},
         )
         .get();
 
