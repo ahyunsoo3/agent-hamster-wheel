@@ -39,3 +39,80 @@ Final verification completed successfully:
 - `flutter analyze`
 - `flutter test`
 - IDE diagnostics for edited files reported no linter errors.
+
+## 2026-05-18 — Follow-Up Review Pass
+
+### Session Restart
+
+Started a follow-up engineering pass after commit `e308ab1` was pushed. The immediate goal is to re-check the current repository state, look for any remaining issues or refactoring opportunities, document findings before each transition, and push any additional improvements if needed.
+
+### Follow-Up Findings
+
+- Confirmed the branch was clean and aligned with `origin/result-flutter-gpt-5-5` before this follow-up pass, aside from this log update.
+- Reviewed `app.dart`, `domain/note.dart`, `domain/folder.dart`, and `widget_test.dart`.
+- Found a domain modeling bug: `Note.copyWith` and `Folder.copyWith` cannot explicitly clear nullable fields (`folderId` and `parentFolderId`) because `null` currently means "keep the existing value." Root cause: nullable optional parameters are being used for both absence and an intentional null value.
+- Found weak widget coverage: `widget_test.dart` builds a generic `MaterialApp`/`Scaffold` instead of the real `LocalFirstNotesApp`, so it does not catch app-shell regressions in tab setup, repository wiring, or database stream bootstrapping.
+
+### Follow-Up Plan
+
+- Update domain `copyWith` methods to use a private sentinel value for nullable fields, preserving ergonomic calls while allowing explicit clears.
+- Replace the generic widget smoke test with a real `LocalFirstNotesApp` smoke test backed by `AppDatabase(NativeDatabase.memory())`.
+- Add focused unit coverage for nullable `copyWith` clearing behavior.
+
+### Domain Copy Semantics Fix
+
+- Updated `Note.copyWith` so `folderId` uses a private `_unset` sentinel. This preserves the existing behavior when `folderId` is omitted while allowing callers to pass `folderId: null` to clear a folder assignment.
+- Updated `Folder.copyWith` with the same sentinel pattern for `parentFolderId`, allowing a folder to be moved back to the root.
+- Technical reasoning: nullable domain fields need three states in `copyWith` calls: omitted, non-null replacement, and explicit null. A private sentinel is the smallest local change that provides those states without adding a broader dependency or new wrapper type.
+
+### Follow-Up Test Improvements
+
+- Added `test/domain_copy_with_test.dart` with focused coverage for preserving, clearing, and replacing `Note.folderId` and `Folder.parentFolderId`.
+- Replaced the generic widget smoke test with one that builds `LocalFirstNotesApp` using an in-memory `AppDatabase`, pumps the real app shell, verifies the tabs and empty notes state, then tears down the widget so the app root owns database disposal.
+- Architectural reasoning: the widget test now covers the app composition boundary instead of only verifying Flutter's stock `MaterialApp` and `Scaffold` widgets.
+
+### Follow-Up Verification Started
+
+- Started formatting and verification for `domain/note.dart`, `domain/folder.dart`, `widget_test.dart`, and the new `domain_copy_with_test.dart`.
+- Formatting completed and `flutter analyze` passed with no issues.
+- `flutter test` progressed through the new domain tests, repository test, and app shell test but did not terminate promptly after the widget test, indicating a likely async teardown/open stream issue in the revised widget smoke test rather than a compile or assertion failure.
+- Stopped the hanging verification process so the widget-test teardown can be corrected before rerunning the suite.
+
+### App Lifecycle Issue
+
+- Root cause identified: `LocalFirstNotesApp` accepts the app database and creates repositories from it, but the root widget does not close the database when disposed. In tests this can leave Drift resources alive after the real app shell is pumped; in production it also leaves ownership ambiguous.
+- Planned fix: add a `dispose` method to `_LocalFirstNotesAppState` that closes `widget.database` after child widgets and stream subscriptions have been disposed.
+
+### App Lifecycle Fix
+
+- Added `dart:async` and `unawaited(widget.database.close())` in `_LocalFirstNotesAppState.dispose`.
+- Removed manual database closing from the widget test because ownership now belongs to `LocalFirstNotesApp` for the injected database lifecycle.
+- Technical reasoning: repository streams are owned below the app root, while the database is supplied to the app root. Closing the database from the root `dispose` keeps lifecycle ownership local and prevents test processes from waiting on lingering Drift resources.
+
+### Follow-Up Verification Restarted
+
+- Restarted formatting, analyzer, and full test verification after the app lifecycle fix.
+- Verification rerun exited with one widget-test failure: Flutter reported pending zero-duration timers created by Drift stream query cancellation after the app widget was unmounted.
+- Root cause: the test disposed the real app shell but did not pump another frame/microtask turn to let Drift's stream cleanup timers drain under Flutter's fake async test binding.
+- Planned fix: pump once after replacing the app with `SizedBox.shrink()` so cancellation cleanup completes before Flutter verifies pending timers.
+
+### Widget Test Teardown Fix
+
+- Added an extra `tester.pump()` after unmounting `LocalFirstNotesApp` in `widget_test.dart`.
+- Technical reasoning: Drift schedules stream-query cleanup through a zero-duration timer when listeners are cancelled. Pumping after unmount drains that cleanup in the fake async test environment and keeps the test focused on app-shell behavior rather than harness timing.
+
+### Final Follow-Up Verification Started
+
+- Restarted `dart format`, `flutter analyze`, and `flutter test` after the widget teardown fix.
+- Verification still failed with the same pending Drift cleanup timers, so an immediate pump did not advance fake time far enough to fire the zero-duration timers created during stream cancellation.
+- Planned adjustment: pump a small positive duration after unmounting the app to advance the fake clock and execute pending cleanup timers.
+
+### Widget Test Timer Drain Adjustment
+
+- Changed the teardown pump to `tester.pump(const Duration(milliseconds: 1))` after unmounting the app.
+- Technical reasoning: advancing fake time by a positive duration gives Drift's stream cleanup timers a chance to execute before Flutter's pending-timer invariant runs.
+
+### Verification After Timer Drain Started
+
+- Restarted formatting, analyzer, and full test verification after the positive-duration teardown pump.
+- Verification passed: `dart format` reported no further changes, `flutter analyze` found no issues, and `flutter test` passed all five tests.

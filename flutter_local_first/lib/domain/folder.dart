@@ -1,4 +1,6 @@
 /// Domain model for a hierarchical folder (decoupled from persistence rows).
+const Object _unset = Object();
+
 class Folder {
   const Folder({
     required this.id,
@@ -17,13 +19,15 @@ class Folder {
   Folder copyWith({
     String? id,
     String? name,
-    String? parentFolderId,
+    Object? parentFolderId = _unset,
     int? sortOrder,
   }) {
     return Folder(
       id: id ?? this.id,
       name: name ?? this.name,
-      parentFolderId: parentFolderId ?? this.parentFolderId,
+      parentFolderId: parentFolderId == _unset
+          ? this.parentFolderId
+          : parentFolderId as String?,
       sortOrder: sortOrder ?? this.sortOrder,
     );
   }

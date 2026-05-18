@@ -1,4 +1,6 @@
 /// Domain model for a note. [content] is plain UTF-8 text suitable for Markdown parsers.
+const Object _unset = Object();
+
 class Note {
   const Note({
     required this.id,
@@ -25,7 +27,7 @@ class Note {
     DateTime? createdAt,
     DateTime? updatedAt,
     List<String>? tags,
-    String? folderId,
+    Object? folderId = _unset,
   }) {
     return Note(
       id: id ?? this.id,
@@ -34,7 +36,7 @@ class Note {
       createdAt: createdAt ?? this.createdAt,
       updatedAt: updatedAt ?? this.updatedAt,
       tags: tags ?? this.tags,
-      folderId: folderId ?? this.folderId,
+      folderId: folderId == _unset ? this.folderId : folderId as String?,
     );
   }
 }
