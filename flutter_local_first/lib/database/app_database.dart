@@ -59,26 +59,29 @@ CREATE VIRTUAL TABLE IF NOT EXISTS fts_notes USING fts5(
 );
 ''');
 
-    // Drop and recreate triggers so stale definitions are replaced on every open.
-    await db.customStatement('DROP TRIGGER IF EXISTS notes_ai;');
-    await db.customStatement('DROP TRIGGER IF EXISTS notes_ad;');
-    await db.customStatement('DROP TRIGGER IF EXISTS notes_au;');
+    // Drop and recreate triggers in a single transaction so stale definitions
+    // are replaced atomically and the 6 DDL statements incur one fsync instead
+    // of six separate implicit-transaction commits.
+    await db.transaction(() async {
+      await db.customStatement('DROP TRIGGER IF EXISTS notes_ai;');
+      await db.customStatement('DROP TRIGGER IF EXISTS notes_ad;');
+      await db.customStatement('DROP TRIGGER IF EXISTS notes_au;');
 
-    await db.customStatement('''
+      await db.customStatement('''
 CREATE TRIGGER notes_ai AFTER INSERT ON notes BEGIN
   INSERT INTO fts_notes(rowid, title, content)
   VALUES (new.rowid, new.title, new.content);
 END;
 ''');
 
-    await db.customStatement('''
+      await db.customStatement('''
 CREATE TRIGGER notes_ad AFTER DELETE ON notes BEGIN
   INSERT INTO fts_notes(fts_notes, rowid, title, content)
   VALUES ('delete', old.rowid, old.title, old.content);
 END;
 ''');
 
-    await db.customStatement('''
+      await db.customStatement('''
 CREATE TRIGGER notes_au AFTER UPDATE ON notes BEGIN
   INSERT INTO fts_notes(fts_notes, rowid, title, content)
   VALUES ('delete', old.rowid, old.title, old.content);
@@ -86,6 +89,7 @@ CREATE TRIGGER notes_au AFTER UPDATE ON notes BEGIN
   VALUES (new.rowid, new.title, new.content);
 END;
 ''');
+    });
 
     if (!rebuild) {
       final rows = await db

@@ -130,8 +130,6 @@ class _NotesTabState extends State<_NotesTab> {
 
   @override
   Widget build(BuildContext context) {
-    final q = _search.text;
-
     return Column(
       children: [
         Padding(
@@ -156,7 +154,9 @@ class _NotesTabState extends State<_NotesTab> {
               final list = snap.data ?? const [];
               if (list.isEmpty) {
                 return Center(
-                  child: Text(q.trim().isEmpty ? 'No notes yet' : 'No matches'),
+                  child: Text(
+                    _activeQuery.isEmpty ? 'No notes yet' : 'No matches',
+                  ),
                 );
               }
               return ListView.builder(

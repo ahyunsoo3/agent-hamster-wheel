@@ -448,3 +448,53 @@ Started a thirteenth engineering review pass. Full re-read of all source files c
 - `flutter analyze` reported two issues during the first pass (unnecessary string escape and unused import), both fixed before committing.
 - `flutter analyze` on the second pass reported no issues.
 - `flutter test` completed successfully with all 19 tests passing: 6 domain copy-with, 3 repository, 9 fts_query (8 unit + 1 end-to-end), and 1 widget.
+
+## 2026-05-18 — Fourteenth Review Pass
+
+### Session Restart
+
+Started a fourteenth engineering review pass. All source files were re-read and the standard quality gates confirmed the codebase is clean: `flutter analyze` found no issues and all 19 tests pass.
+
+### Issues Found
+
+#### Bug: `pubspec.yaml` lists `path` as a production dependency
+
+- **File:** `pubspec.yaml`, `dependencies` section.
+- **Root cause:** `path: ^1.9.1` was listed under `dependencies` rather than `dev_dependencies`. The `path` package is only imported in `test/repository_test.dart` for constructing temporary SQLite file paths during the FTS repair marker regression test. No file under `lib/` imports `package:path`. Shipping `path` as a runtime dependency unnecessarily inflates the app's dependency graph.
+- **Fix:** Move `path: ^1.9.1` from `dependencies` to `dev_dependencies`.
+
+#### Issue: `_NotesTabState.build` reads `_search.text` for the empty-state message
+
+- **File:** `lib/app.dart`, `_NotesTabState.build`.
+- **Root cause:** The build method reads `final q = _search.text` and then evaluates `q.trim().isEmpty` to decide whether to show `'No notes yet'` or `'No matches'`. Since `_activeQuery` was introduced in the prior pass as the authoritative trimmed query string that controls which stream is active, reading `_search.text.trim()` during build is redundant. In cases where `_search.text` has leading/trailing spaces, `_search.text.trim()` and `_activeQuery` could produce different results, causing the UI message to disagree with the stream that is actually active.
+- **Fix:** Replace `final q = _search.text` with a read of `_activeQuery` in the build method's empty-state decision. This ensures the displayed message always matches the stream that was started.
+
+#### Optimization: `_installFts5` makes 8 sequential single-statement round-trips
+
+- **File:** `lib/database/app_database.dart`, `_installFts5`.
+- **Root cause:** The FTS5 installation path issues each DDL statement as an individual `customStatement` call. In SQLite, each call outside an explicit transaction is wrapped in its own implicit transaction, resulting in 8 separate write transactions and associated fsync overhead on real storage.
+- **Fix:** Wrap the trigger DROP and CREATE statements (6 of the 8 calls) in an explicit `db.transaction(...)` block, reducing them to a single transaction commit. The `CREATE TABLE IF NOT EXISTS app_metadata` and `CREATE VIRTUAL TABLE IF NOT EXISTS fts_notes` calls are placed before the transaction since SQLite cannot DDL virtual tables inside a transaction on all platforms.
+- **Expected gain:** On a real device's storage, startup DDL cost is reduced from up to 8 transaction commits to at most 3 (one for app_metadata, one for fts_notes, one for all trigger drops and recreations). The FTS rebuild statement, when it runs, remains outside the trigger transaction since it is already a virtual-table content operation.
+
+### Fix: `path` moved to `dev_dependencies`
+
+- Moved `path: ^1.9.1` from `dependencies` to `dev_dependencies` in `pubspec.yaml`. The `path` package is only imported in `test/repository_test.dart` for constructing temporary SQLite file paths; no production source file under `lib/` imports it. Placing it in `dependencies` meant it was shipped as a runtime dependency in app bundles unnecessarily.
+- Ran `dart pub get` to apply the change; 1 dependency changed.
+
+### Fix: `_NotesTabState.build` uses `_activeQuery` for empty-state message
+
+- Replaced `final q = _search.text` and `q.trim().isEmpty` with `_activeQuery.isEmpty` in the `StreamBuilder` builder of `_NotesTabState.build`.
+- `_activeQuery` is the authoritative trimmed query string that controls which stream is active. Reading `_search.text.trim()` during build was a redundant secondary read from the `TextEditingController` that could disagree with `_activeQuery` if the field had leading/trailing whitespace. The empty-state message now always matches the stream.
+
+### Optimization: `_installFts5` trigger DDL wrapped in a single transaction
+
+- Wrapped the 3 DROP and 3 CREATE trigger statements in `_installFts5` in a single `db.transaction(...)` call.
+- Previous behaviour: each of the 6 DDL statements was committed as a separate implicit SQLite transaction (up to 6 fsync calls on WAL-mode storage).
+- New behaviour: all 6 trigger DDL statements are committed atomically in one transaction (1 fsync for trigger setup). The `CREATE TABLE IF NOT EXISTS app_metadata` and `CREATE VIRTUAL TABLE IF NOT EXISTS fts_notes` calls remain outside the transaction because SQLite restricts virtual-table DDL in certain transaction contexts. The FTS5 rebuild statement, when it runs, also remains outside since it is a virtual-table content operation.
+- Expected gain: on a cold device with real persistent storage, the FTS startup overhead is reduced from up to 8 transaction commits to at most 3.
+
+### Fourteenth-Pass Verification
+
+- `dart format lib/app.dart lib/database/app_database.dart` — no formatting changes required.
+- `flutter analyze` — no issues found.
+- `flutter test` — all 19 tests passed.
