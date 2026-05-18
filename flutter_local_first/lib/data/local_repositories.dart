@@ -50,7 +50,7 @@ List<Note> _notesFromSearchRows(List<QueryRow> rows, List<NoteTagRow> tagRows) {
           content: r.read<String>('content'),
           createdAt: r.read<DateTime>('created_at'),
           updatedAt: r.read<DateTime>('updated_at'),
-          tags: List.unmodifiable(List<String>.from(byNote[id] ?? const [])),
+          tags: List.unmodifiable(byNote[id] ?? const []),
           folderId: r.readNullable<String>('folder_id'),
         );
       })
@@ -83,23 +83,20 @@ class NotesLocalRepository {
   final AppDatabase _db;
 
   Stream<List<Note>> watchNotes() {
-    return (_db.select(
-      _db.notes,
-    )..orderBy([(t) => OrderingTerm.desc(t.updatedAt)])).watch().asyncMap((
-      noteRows,
-    ) async {
-      if (noteRows.isEmpty) return const <Note>[];
-      final ids = noteRows.map((r) => r.id).toList(growable: false);
-      final tagRows = await (_db.select(
-        _db.noteTags,
-      )..where((t) => t.noteId.isIn(ids))).get();
-      final byNote = _tagsByNoteId(tagRows);
-      return noteRows
-          .map(
-            (r) => _noteFromRow(r, List<String>.from(byNote[r.id] ?? const [])),
-          )
-          .toList(growable: false);
-    });
+    return (_db.select(_db.notes)
+          ..orderBy([(t) => OrderingTerm.desc(t.updatedAt)]))
+        .watch()
+        .asyncMap((noteRows) async {
+          if (noteRows.isEmpty) return const <Note>[];
+          final ids = noteRows.map((r) => r.id).toList(growable: false);
+          final tagRows = await (_db.select(
+            _db.noteTags,
+          )..where((t) => t.noteId.isIn(ids))).get();
+          final byNote = _tagsByNoteId(tagRows);
+          return noteRows
+              .map((r) => _noteFromRow(r, byNote[r.id] ?? const []))
+              .toList(growable: false);
+        });
   }
 
   /// FTS5 over native `fts_notes` — matches [Note.title] and [Note.content].
@@ -183,7 +180,7 @@ ORDER BY bm25(fts_notes)
       _db.noteTags,
     )..where((t) => t.noteId.equals(id))).get();
     final byNote = _tagsByNoteId(tagRows);
-    return _noteFromRow(row, List<String>.from(byNote[id] ?? const []));
+    return _noteFromRow(row, byNote[id] ?? const []);
   }
 
   Future<void> upsertNote(Note note) async {

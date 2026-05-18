@@ -95,6 +95,71 @@ void main() {
     });
   });
 
+  group('Note invariants', () {
+    test('empty id throws AssertionError', () {
+      expect(
+        () => Note(
+          id: '',
+          title: 'T',
+          content: 'C',
+          createdAt: now,
+          updatedAt: now,
+          tags: const [],
+        ),
+        throwsA(isA<AssertionError>()),
+      );
+    });
+
+    test('createdAt after updatedAt throws AssertionError', () {
+      final later = now.add(const Duration(seconds: 1));
+      expect(
+        () => Note(
+          id: 'n1',
+          title: 'T',
+          content: 'C',
+          createdAt: later,
+          updatedAt: now,
+          tags: const [],
+        ),
+        throwsA(isA<AssertionError>()),
+      );
+    });
+
+    test('equal createdAt and updatedAt is valid', () {
+      expect(
+        () => Note(
+          id: 'n1',
+          title: 'T',
+          content: 'C',
+          createdAt: now,
+          updatedAt: now,
+          tags: const [],
+        ),
+        returnsNormally,
+      );
+    });
+  });
+
+  group('Folder invariants', () {
+    test('empty id throws AssertionError', () {
+      expect(
+        () => Folder(id: '', name: 'Root'),
+        throwsA(isA<AssertionError>()),
+      );
+    });
+
+    test('negative sortOrder throws AssertionError', () {
+      expect(
+        () => Folder(id: 'f1', name: 'Root', sortOrder: -1),
+        throwsA(isA<AssertionError>()),
+      );
+    });
+
+    test('zero sortOrder is valid', () {
+      expect(() => Folder(id: 'f1', name: 'Root'), returnsNormally);
+    });
+  });
+
   group('Folder equality', () {
     const a = Folder(
       id: 'f1',

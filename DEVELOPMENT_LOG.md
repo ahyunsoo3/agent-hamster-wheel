@@ -612,3 +612,53 @@ Started a seventeenth engineering review pass. Fresh full read of all source fil
 - `flutter analyze`: no issues.
 - `dart format`: one file changed (`lib/data/local_repositories.dart` after formatter run).
 - `flutter test --reporter expanded`: all 29 tests pass.
+
+---
+
+## 2026-05-18 — Eighteenth Review Pass
+
+### Session Restart
+
+Fresh full read of all 13 source files and all 4 test files completed. Quality gates confirmed clean: `flutter analyze` no issues, all 29 tests pass, `dart format` zero changes.
+
+### Issues Found
+
+#### Issue 1 — Redundant `List<String>.from()` copy in `_notesFromSearchRows`
+
+- **File:** `lib/data/local_repositories.dart`, line 53.
+- **Root cause:** `_notesFromSearchRows` builds each `Note`'s tag list as `List.unmodifiable(List<String>.from(byNote[id] ?? const []))`. The inner `List<String>.from(x)` creates a full copy of the sorted list returned by `_tagsByNoteId`, and `List.unmodifiable` then wraps that copy. The copy is unnecessary: `_tagsByNoteId` returns a newly-built `List<String>` from a locally-scoped `Map` that is discarded after this call. Wrapping the map's value directly in `List.unmodifiable` is safe and avoids the allocation.
+- **Fix:** Replace `List.unmodifiable(List<String>.from(byNote[id] ?? const []))` with `List.unmodifiable(byNote[id] ?? const [])`. The same redundant-copy pattern exists in `watchNotes()` and `getNoteById()`, which pass `List<String>.from(byNote[...] ?? const [])` to `_noteFromRow`. Since `_noteFromRow` already wraps in `List.unmodifiable`, the `List<String>.from()` copies in those callers are equally redundant. Fix all three call sites.
+
+#### Issue 2 — `Note` and `Folder` constructors have no invariant assertions
+
+- **File:** `lib/domain/note.dart`, `lib/domain/folder.dart`.
+- **Root cause:** Both domain models are treated as value objects with strict semantics, but their constructors accept structurally invalid data silently. A `Note` with an empty `id`, or a `Note` whose `createdAt` is strictly after `updatedAt`, represents a data-model violation that will propagate to the database and cause subtle integrity issues. A `Folder` with an empty `id` or a negative `sortOrder` is similarly invalid. Dart `assert` statements are the canonical way to encode constructor pre-conditions: they are checked in debug and test mode, cost nothing in release mode, and provide immediate, informative failures during development.
+- **Fix:** Add `assert(id.isNotEmpty)` to both `Note` and `Folder`. Add `assert(!createdAt.isAfter(updatedAt))` to `Note`. Add `assert(sortOrder >= 0)` to `Folder`.
+
+### Fixes Applied
+
+#### `lib/data/local_repositories.dart`
+
+- Removed three redundant `List<String>.from(...)` copies across `_notesFromSearchRows`, `watchNotes()`, and `getNoteById()`. Each call site previously copied the sorted `List<String>` from `_tagsByNoteId`'s map before passing it to `List.unmodifiable`. Since the map is locally scoped and discarded after use, the mutable list can be wrapped directly in `List.unmodifiable` with no copy. This eliminates one heap allocation per note per read path.
+
+#### `lib/domain/note.dart`
+
+- Removed `const` from the `Note` constructor. The `assert(!createdAt.isAfter(updatedAt), ...)` condition calls `DateTime.isAfter`, which is a non-constant method and cannot appear in a `const` constructor. `const Note(...)` was never used anywhere in the codebase (confirmed by grep), so this change has no call-site impact.
+- Added `assert(id != '', 'Note.id must not be empty')`.
+- Added `assert(!createdAt.isAfter(updatedAt), 'Note.createdAt must not be after updatedAt')`.
+
+#### `lib/domain/folder.dart`
+
+- Added `assert(id != '', 'Folder.id must not be empty')`.
+- Added `assert(sortOrder >= 0, 'Folder.sortOrder must be non-negative')`. `Folder`'s constructor retains `const` because both asserts use only integer and string-literal comparisons, which are constant-eligible.
+
+#### `test/domain_copy_with_test.dart`
+
+- Added `Note invariants` group (3 tests): empty-id assert, `createdAt > updatedAt` assert, and a positive case confirming equal timestamps are valid.
+- Added `Folder invariants` group (3 tests): empty-id assert, negative-`sortOrder` assert, and a positive case confirming zero `sortOrder` is valid.
+
+### Eighteenth-Pass Verification
+
+- `flutter analyze`: no issues (two passes — first found the `const` + `isAfter` incompatibility, second was clean after `const` removal).
+- `dart format`: 3 files reformatted on first run, 0 on second.
+- `flutter test --reporter expanded`: all 35 tests pass (29 prior + 6 new invariant tests).

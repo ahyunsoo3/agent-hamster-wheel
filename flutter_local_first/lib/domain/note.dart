@@ -8,7 +8,7 @@ const _listEq = ListEquality<String>();
 
 /// Domain model for a note. [content] is plain UTF-8 text suitable for Markdown parsers.
 class Note {
-  const Note({
+  Note({
     required this.id,
     required this.title,
     required this.content,
@@ -16,7 +16,11 @@ class Note {
     required this.updatedAt,
     required this.tags,
     this.folderId,
-  });
+  }) : assert(id != '', 'Note.id must not be empty'),
+       assert(
+         !createdAt.isAfter(updatedAt),
+         'Note.createdAt must not be after updatedAt',
+       );
 
   final String id;
   final String title;

@@ -8,7 +8,8 @@ class Folder {
     required this.name,
     this.parentFolderId,
     this.sortOrder = 0,
-  });
+  }) : assert(id != '', 'Folder.id must not be empty'),
+       assert(sortOrder >= 0, 'Folder.sortOrder must be non-negative');
 
   final String id;
   final String name;
