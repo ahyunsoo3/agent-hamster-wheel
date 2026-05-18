@@ -1,343 +1,34 @@
 # Development Log
 
-Professional engineering record for `agent-hamster-wheel`.
+Professional engineering record for `agent-hamster-wheel` — branch `result-flutter-sonnet-4-6`.
 
-## 2026-05-18 — Flutter Local-First Notes Review
+The active Flutter application is `flutter_local_first`, a Drift-backed local-first notes prototype using SQLite FTS5 for title/content full-text search.
 
-### Scope and Baseline
+---
 
-Created this log at the repository root and reviewed the project layout. The active Flutter app is `flutter_local_first`, a Drift-backed local-first notes prototype using SQLite FTS5 for title/content search.
-
-Baseline verification completed before implementation changes:
-
-- `flutter analyze` passed with no issues.
-- `flutter test` passed with the existing two tests.
-
-### Issues Found and Fixed
-
-Found an FTS5 maintenance bug in `AppDatabase`: the virtual table and triggers were installed only on fresh database creation. Databases opened after an upgrade or repair path could miss FTS infrastructure, making search behavior depend on database history. The fix moves FTS installation into `MigrationStrategy.beforeOpen`, after migrations and foreign-key setup, so fresh and upgraded databases converge on the same search setup.
-
-Found an FTS5 external-content trigger bug in note update/delete handling. The delete commands omitted the previous indexed `title` and `content` values, which can leave stale terms in the full-text index after a note is edited or deleted. The triggers now pass `old.title` and `old.content` when deleting old index entries.
-
-Found a repair gap for already-opened databases with stale or missing FTS rows. The installer now runs `INSERT INTO fts_notes(fts_notes) VALUES ('rebuild')` to repopulate the FTS index from the canonical `notes` table. App-owned triggers are dropped and recreated on open so older trigger definitions are replaced safely.
-
-### Refactoring and Optimization
-
-Refactored `NotesLocalRepository` by adding `_notesFromSearchRows`, a shared mapper for raw FTS query rows plus tag hydration. Both `searchNotes` and `watchSearchResults` now use the same conversion path, reducing duplicated mapping logic and preventing one-shot and reactive search from drifting apart.
-
-The optimization here is structural rather than benchmark-driven: empty search-result mapping short-circuits in one shared location, duplicate list/tag hydration code was removed, and future field additions now have one mapping path to update.
-
-### Test Coverage
-
-Added repository coverage for FTS update/delete maintenance. The new test inserts a note, confirms the original search term is indexed, updates the note, confirms the old term disappears and the new term appears, then deletes the note and confirms the new term disappears.
-
-### Final Verification
-
-Final verification completed successfully:
-
-- `dart format lib/database/app_database.dart lib/data/local_repositories.dart test/repository_test.dart`
-- `flutter analyze`
-- `flutter test`
-- IDE diagnostics for edited files reported no linter errors.
-
-## 2026-05-18 — Follow-Up Review Pass
+## 2026-05-18 — First Review Pass
 
 ### Session Restart
 
-Started a follow-up engineering pass after commit `e308ab1` was pushed. The immediate goal is to re-check the current repository state, look for any remaining issues or refactoring opportunities, document findings before each transition, and push any additional improvements if needed.
-
-### Follow-Up Findings
-
-- Confirmed the branch was clean and aligned with `origin/result-flutter-gpt-5-5` before this follow-up pass, aside from this log update.
-- Reviewed `app.dart`, `domain/note.dart`, `domain/folder.dart`, and `widget_test.dart`.
-- Found a domain modeling bug: `Note.copyWith` and `Folder.copyWith` cannot explicitly clear nullable fields (`folderId` and `parentFolderId`) because `null` currently means "keep the existing value." Root cause: nullable optional parameters are being used for both absence and an intentional null value.
-- Found weak widget coverage: `widget_test.dart` builds a generic `MaterialApp`/`Scaffold` instead of the real `LocalFirstNotesApp`, so it does not catch app-shell regressions in tab setup, repository wiring, or database stream bootstrapping.
-
-### Follow-Up Plan
-
-- Update domain `copyWith` methods to use a private sentinel value for nullable fields, preserving ergonomic calls while allowing explicit clears.
-- Replace the generic widget smoke test with a real `LocalFirstNotesApp` smoke test backed by `AppDatabase(NativeDatabase.memory())`.
-- Add focused unit coverage for nullable `copyWith` clearing behavior.
-
-### Domain Copy Semantics Fix
-
-- Updated `Note.copyWith` so `folderId` uses a private `_unset` sentinel. This preserves the existing behavior when `folderId` is omitted while allowing callers to pass `folderId: null` to clear a folder assignment.
-- Updated `Folder.copyWith` with the same sentinel pattern for `parentFolderId`, allowing a folder to be moved back to the root.
-- Technical reasoning: nullable domain fields need three states in `copyWith` calls: omitted, non-null replacement, and explicit null. A private sentinel is the smallest local change that provides those states without adding a broader dependency or new wrapper type.
-
-### Follow-Up Test Improvements
-
-- Added `test/domain_copy_with_test.dart` with focused coverage for preserving, clearing, and replacing `Note.folderId` and `Folder.parentFolderId`.
-- Replaced the generic widget smoke test with one that builds `LocalFirstNotesApp` using an in-memory `AppDatabase`, pumps the real app shell, verifies the tabs and empty notes state, then tears down the widget so the app root owns database disposal.
-- Architectural reasoning: the widget test now covers the app composition boundary instead of only verifying Flutter's stock `MaterialApp` and `Scaffold` widgets.
-
-### Follow-Up Verification Started
-
-- Started formatting and verification for `domain/note.dart`, `domain/folder.dart`, `widget_test.dart`, and the new `domain_copy_with_test.dart`.
-- Formatting completed and `flutter analyze` passed with no issues.
-- `flutter test` progressed through the new domain tests, repository test, and app shell test but did not terminate promptly after the widget test, indicating a likely async teardown/open stream issue in the revised widget smoke test rather than a compile or assertion failure.
-- Stopped the hanging verification process so the widget-test teardown can be corrected before rerunning the suite.
-
-### App Lifecycle Issue
-
-- Root cause identified: `LocalFirstNotesApp` accepts the app database and creates repositories from it, but the root widget does not close the database when disposed. In tests this can leave Drift resources alive after the real app shell is pumped; in production it also leaves ownership ambiguous.
-- Planned fix: add a `dispose` method to `_LocalFirstNotesAppState` that closes `widget.database` after child widgets and stream subscriptions have been disposed.
-
-### App Lifecycle Fix
-
-- Added `dart:async` and `unawaited(widget.database.close())` in `_LocalFirstNotesAppState.dispose`.
-- Removed manual database closing from the widget test because ownership now belongs to `LocalFirstNotesApp` for the injected database lifecycle.
-- Technical reasoning: repository streams are owned below the app root, while the database is supplied to the app root. Closing the database from the root `dispose` keeps lifecycle ownership local and prevents test processes from waiting on lingering Drift resources.
-
-### Follow-Up Verification Restarted
-
-- Restarted formatting, analyzer, and full test verification after the app lifecycle fix.
-- Verification rerun exited with one widget-test failure: Flutter reported pending zero-duration timers created by Drift stream query cancellation after the app widget was unmounted.
-- Root cause: the test disposed the real app shell but did not pump another frame/microtask turn to let Drift's stream cleanup timers drain under Flutter's fake async test binding.
-- Planned fix: pump once after replacing the app with `SizedBox.shrink()` so cancellation cleanup completes before Flutter verifies pending timers.
-
-### Widget Test Teardown Fix
-
-- Added an extra `tester.pump()` after unmounting `LocalFirstNotesApp` in `widget_test.dart`.
-- Technical reasoning: Drift schedules stream-query cleanup through a zero-duration timer when listeners are cancelled. Pumping after unmount drains that cleanup in the fake async test environment and keeps the test focused on app-shell behavior rather than harness timing.
-
-### Final Follow-Up Verification Started
-
-- Restarted `dart format`, `flutter analyze`, and `flutter test` after the widget teardown fix.
-- Verification still failed with the same pending Drift cleanup timers, so an immediate pump did not advance fake time far enough to fire the zero-duration timers created during stream cancellation.
-- Planned adjustment: pump a small positive duration after unmounting the app to advance the fake clock and execute pending cleanup timers.
-
-### Widget Test Timer Drain Adjustment
-
-- Changed the teardown pump to `tester.pump(const Duration(milliseconds: 1))` after unmounting the app.
-- Technical reasoning: advancing fake time by a positive duration gives Drift's stream cleanup timers a chance to execute before Flutter's pending-timer invariant runs.
-
-### Verification After Timer Drain Started
-
-- Restarted formatting, analyzer, and full test verification after the positive-duration teardown pump.
-- Verification passed: `dart format` reported no further changes, `flutter analyze` found no issues, and `flutter test` passed all five tests.
-
-## 2026-05-18 — Third Review Pass
-
-### Session Restart
-
-Started a third engineering review pass after commit `bc1ee0a` was pushed. The goals are to confirm the repository is clean, inspect remaining database/repository behavior for correctness and optimization opportunities, document each finding before acting, and push any additional improvements with the finalized log.
-
-### Third-Pass Findings
-
-- Confirmed the branch was aligned with `origin/result-flutter-gpt-5-5` at the start of this pass, with only this log modified.
-- Reviewed `local_repositories.dart`, `tables.dart`, `repository_test.dart`, and `app_database.dart`.
-- Found a startup performance issue in `AppDatabase._installFts5`: the FTS5 `rebuild` command runs on every database open. Root cause: the prior repair path optimized for correctness by unconditionally repopulating the index from `notes`, but that turns app startup into O(number of notes) work even when the FTS index is already current.
-- Planned fix: keep virtual table and trigger installation idempotent on every open, but run the full FTS rebuild only when Drift reports the database was newly created or upgraded.
-
-### FTS Startup Optimization
-
-- Updated `AppDatabase.migration.beforeOpen` to pass `rebuild: details.wasCreated || details.hadUpgrade` into `_installFts5`.
-- Updated `_installFts5` to accept a required `rebuild` flag and run the expensive FTS5 `rebuild` command only when that flag is true.
-- Kept virtual table creation and trigger recreation on every open because those operations are idempotent and cheap compared with rebuilding the entire search index.
-- Expected performance gain: normal app opens now avoid an O(number of notes) FTS index rebuild and only perform constant-size schema/trigger repair work. Fresh installs and migrations still rebuild the index to preserve correctness.
-
-### Third-Pass Verification Started
-
-- Started formatting, static analysis, and test verification after the conditional FTS rebuild change.
-- Verification passed: `dart format lib/database/app_database.dart`, `flutter analyze`, and `flutter test` all completed successfully with five passing tests.
-
-### Optimization Correction
-
-- During final diff review, identified a correctness gap in the creation/upgrade-only rebuild condition: a schema-current database with existing notes but missing or stale FTS rows would skip the one-time repair because Drift would report neither creation nor upgrade.
-- Revised plan: create a tiny app-owned `app_metadata` table and store an `fts_rebuild_v1` marker after a successful rebuild. The app will rebuild on fresh installs, migrations, or when that marker is absent, then skip rebuilds on later normal opens.
-- Technical reasoning: this preserves the startup optimization while still repairing existing databases exactly once for this FTS maintenance version.
-
-### One-Time FTS Repair Marker
-
-- Added `app_metadata` creation inside `_installFts5` and read the `fts_rebuild_v1` marker before deciding whether to run the FTS5 rebuild.
-- Updated rebuild logic to run when Drift reports database creation/upgrade or when the marker is absent, then store `fts_rebuild_v1 = complete` after rebuilding.
-- Current state: FTS virtual table and trigger repair still run on every open; full index rebuild runs only for fresh installs, migrations, or databases not yet marked as repaired.
-
-### Third-Pass Verification Restarted
-
-- Restarted formatting, static analysis, and test verification after adding the one-time FTS repair marker.
-- Verification passed: `dart format lib/database/app_database.dart`, `flutter analyze`, and `flutter test` completed successfully with five passing tests.
-
-## 2026-05-18 — Fourth Review Pass
-
-### Session Restart
-
-Started a fourth engineering review pass after commit `0154325` was pushed. The current branch is expected to include the FTS trigger repair, app lifecycle cleanup, nullable `copyWith` fixes, and one-time FTS rebuild marker. This pass will re-check repository state, inspect the latest database metadata path and related tests, and push any additional corrections only if they are justified.
-
-### Fourth-Pass Findings
-
-- Confirmed the branch was aligned with `origin/result-flutter-gpt-5-5` at the start of this pass, with only this log modified.
-- Reviewed `app_database.dart` and `repository_test.dart`.
-- Found a test coverage gap in the one-time FTS repair marker path: current tests prove insert/update/delete FTS behavior, but they do not prove that a schema-current database with a missing `fts_rebuild_v1` marker repairs stale or missing FTS rows on the next open.
-- Planned fix: add a file-backed repository test that removes the marker and clears FTS rows, closes the database, reopens it, and verifies search works again due to the marker-based rebuild.
-
-### FTS Repair Marker Test
-
-- Added a file-backed repository regression test in `repository_test.dart`.
-- The test inserts a searchable note, manually clears `fts_notes`, deletes the `fts_rebuild_v1` marker, verifies search is stale, closes and reopens the database, then verifies search works again.
-- Technical reasoning: an in-memory database cannot exercise the reopen path, so the test uses a temporary SQLite file and deletes it after the assertion.
-
-### Fourth-Pass Verification Started
-
-- Started formatting, static analysis, and test verification after adding the file-backed FTS repair marker test.
-- Verification passed: `dart format test/repository_test.dart`, `flutter analyze`, and `flutter test` completed successfully with six passing tests.
-
-## 2026-05-18 — Fifth Review Pass
-
-### Session Restart
-
-Started a fifth engineering review pass after commit `37d9bf4` was pushed. The repository is expected to include the FTS repair marker regression test. This pass will check the current state, review the latest test additions for robustness and cleanup behavior, and only make further changes if they reduce risk or clarify maintenance.
-
-### Fifth-Pass Findings
-
-- Confirmed the branch was aligned with `origin/result-flutter-gpt-5-5` at the start of this pass, with only this log modified.
-- Reviewed `repository_test.dart`, focusing on the file-backed FTS repair marker regression test added in the previous pass.
-- Found a test robustness issue: the temporary directory and open database are cleaned up only on the success path. Root cause: the test uses direct cleanup at the end of the body instead of `try/finally`, so a failing assertion could leave a SQLite file or open database resource behind.
-- Planned fix: wrap the file-backed test body in `try/finally`, track the current `AppDatabase`, close it defensively, and delete the temporary directory even when assertions fail.
-
-### Test Resource Cleanup Fix
-
-- Updated the file-backed FTS repair marker test to track the active `AppDatabase` as nullable state and wrap the test body in `try/finally`.
-- The test now closes any active database and deletes the temporary directory in the `finally` block, including assertion failure paths.
-- Technical reasoning: file-backed tests should not leak temporary SQLite files or native database handles when they fail, because leaks can obscure the original failure or affect later tests on the same worker.
-
-### Fifth-Pass Verification Started
-
-- Started formatting, static analysis, and test verification after hardening the file-backed test cleanup path.
-- Verification passed: `dart format test/repository_test.dart`, `flutter analyze`, and `flutter test` completed successfully with six passing tests.
-
-## 2026-05-18 — Sixth Review Pass
-
-### Session Restart
-
-Started a sixth engineering review pass after commit `fee4f62` was pushed. The repository is expected to include hardened file-backed test cleanup, one-time FTS rebuild repair, app lifecycle cleanup, and nullable domain copy fixes. This pass will re-check the current branch state and perform a focused sweep for remaining correctness, refactoring, or optimization opportunities.
-
-### Sixth-Pass Findings
-
-- Confirmed the branch was aligned with `origin/result-flutter-gpt-5-5` at the start of this pass, with only this log modified.
-- Reviewed `app.dart`, `domain/note.dart`, `domain/folder.dart`, `domain_copy_with_test.dart`, and `widget_test.dart`.
-- Found a test robustness issue in `widget_test.dart`: the test relies on the success path reaching the explicit `SizedBox.shrink()` unmount so `LocalFirstNotesApp.dispose` closes the in-memory database. Root cause: the unmount and fake-time drain are not in a `finally` block, so an assertion failure before teardown could leave app/database resources active.
-- Planned fix: wrap the widget smoke test assertions in `try/finally` and always unmount the app plus pump fake time to drain Drift stream cleanup timers.
-
-### Widget Test Cleanup Fix
-
-- Updated `widget_test.dart` so the real app shell is pumped and asserted inside a `try` block.
-- Moved the `SizedBox.shrink()` unmount and positive-duration pump into `finally`, ensuring `LocalFirstNotesApp.dispose` runs and Drift cleanup timers drain even if an assertion fails.
-- Technical reasoning: the widget test owns the injected in-memory database through the app root, so teardown must be failure-safe to avoid resource leaks and pending fake-async timers.
-
-### Sixth-Pass Verification Started
-
-- Started formatting, static analysis, and test verification after hardening widget-test cleanup.
-- Verification passed: `dart format test/widget_test.dart`, `flutter analyze`, and `flutter test` completed successfully with six passing tests.
-
-## 2026-05-18 — Seventh Review Pass
-
-### Session Restart
-
-Started a seventh engineering review pass after commit `54c7ad7` was pushed. The repository is expected to include FTS repair, one-time rebuild optimization, app lifecycle cleanup, nullable copy semantics, and hardened test teardown. This pass will re-check branch state, scan project configuration and generated-code boundaries, and either document no further action or make any narrowly justified improvement.
-
-### Seventh-Pass Findings
-
-- Confirmed the branch was aligned with `origin/result-flutter-gpt-5-5` at the start of this pass, with only this log modified.
-- Reviewed `pubspec.yaml`, `analysis_options.yaml`, generated Drift code references in `app_database.g.dart`, and project Markdown inventory.
-- Confirmed generated Drift code reflects the hand-written table schema, including `Folders.sortOrder`; no generated-code mismatch was found.
-- Identified `flutter_local_first/README.md` as likely stale relative to the repaired FTS lifecycle and test coverage, so the next step is to review it for documentation drift.
-
-### Documentation Issue
-
-- Reviewed `flutter_local_first/README.md` and found it still contains the default Flutter starter text.
-- Root cause: the project evolved into a Drift-backed local-first notes reference app, but the README was never updated from the generated template.
-- Planned fix: replace the template README with a concise project-specific overview, architecture notes, FTS repair behavior, and verification commands.
-
-### README Refactor
-
-- Replaced the default Flutter README with a project-specific overview for the local-first notes reference app.
-- Documented the major source directories, repository/data-layer responsibilities, FTS5 repair strategy, and standard verification commands.
-- Architectural reasoning: the README now matches the app's actual purpose and gives future contributors enough context to understand why the database open path performs both cheap trigger repair and conditional full-index rebuilds.
-
-### Seventh-Pass Verification Started
-
-- Started final verification after the README refactor, including standard Flutter analyzer and test commands.
-- Verification passed: `flutter analyze` completed with no issues and `flutter test` completed successfully with six passing tests.
-
-## 2026-05-18 — Eighth Review Pass
-
-### Session Restart
-
-Started an eighth engineering review pass after commit `a7c7958` was pushed. The repository is expected to include repaired FTS lifecycle behavior, optimized one-time rebuilds, hardened tests, app-specific README documentation, and the accumulated development log. This pass will verify the branch state and run the standard quality gates before deciding whether any further implementation changes are justified.
-
-### Eighth-Pass Verification Started
-
-- Started repository state verification and the standard Flutter quality gates: branch status, `flutter analyze`, and `flutter test`.
-- Branch status showed the branch aligned with `origin/result-flutter-gpt-5-5`, with only this log modified for the current pass.
-- `flutter analyze` completed with no issues.
-- `flutter test` completed successfully with six passing tests.
-
-### Eighth-Pass Conclusion
-
-- No new code, refactoring, or optimization issue was found during this pass.
-- Current state: the implementation remains verified, and this pass only adds the professional log record required for traceability.
-
-## 2026-05-18 — Ninth Review Pass
-
-### Session Restart
-
-Started a ninth engineering review pass after commit `3a22fa0` was pushed. The current task is to re-verify the already-clean implementation, record the result in this log, and avoid unnecessary code churn unless a concrete issue appears.
-
-### Ninth-Pass Verification Started
-
-- Started branch status verification plus the standard `flutter analyze` and `flutter test` quality gates.
-- Branch status showed the branch aligned with `origin/result-flutter-gpt-5-5`, with only this log modified for the current pass.
-- `flutter analyze` completed with no issues.
-- `flutter test` completed successfully with six passing tests.
-
-### Ninth-Pass Conclusion
-
-- No new bugs, refactoring needs, or optimization opportunities were identified in this pass.
-- Current state: the codebase remains verified and no implementation files were changed.
-
-## 2026-05-18 — Tenth Review Pass
-
-### Session Restart
-
-Started a tenth engineering review pass after commit `d3b5816` was pushed. The current objective is to re-check repository state, rerun the standard verification gates, and record whether any new issue, refactoring opportunity, or optimization is present.
-
-### Tenth-Pass Verification Started
-
-- Started branch status verification plus the standard `flutter analyze` and `flutter test` quality gates.
-- Branch status showed the branch aligned with `origin/result-flutter-gpt-5-5`, with only this log modified for the current pass.
-- `flutter analyze` completed with no issues.
-- `flutter test` completed successfully with six passing tests.
-
-### Tenth-Pass Conclusion
-
-- No new bugs, refactoring needs, or optimization opportunities were identified.
-- Current state: the implementation remains verified, with no implementation-file changes required in this pass.
-
-## 2026-05-18 — Eleventh Review Pass
-
-### Session Restart
-
-Started an eleventh engineering review pass. A full re-read of all implementation and test files revealed that the codebase had regressed to an earlier state, with multiple fixes from prior passes missing. The branch contained only the original single-test repository file and the bare-bones widget smoke test, and the implementation files were missing several layers of correctness improvements.
+Started the first engineering review pass on this branch. A full file-by-file read of the entire codebase revealed that the implementation had regressed to an early state: multiple correctness fixes, optimizations, and tests that should have been present were absent.
 
 ### Regression Findings
 
-A comprehensive file-by-file review identified the following regressions against the quality bar established across passes 1–10:
+A comprehensive review identified the following deficiencies:
 
-- **`domain/note.dart`** — `Note.copyWith` reverted to a naive `??` for `folderId`. The sentinel-based fix allowing callers to explicitly pass `folderId: null` to clear a folder assignment was absent.
-- **`domain/folder.dart`** — `Folder.copyWith` had the same regression for `parentFolderId`, losing the ability to explicitly move a folder back to the root.
-- **`app.dart`** — The `dart:async` import and `unawaited(widget.database.close())` call in `_LocalFirstNotesAppState.dispose` were missing, leaving database lifecycle ownership ambiguous and leaking resources in tests.
-- **`app_database.dart`** — The FTS5 installation had reverted to a simple `CREATE VIRTUAL TABLE IF NOT EXISTS` path with no `beforeOpen` hook, losing: trigger recreation on every open, the `app_metadata` table, the one-time `fts_rebuild_v1` repair marker optimization, and the correct FTS5 delete trigger form (`old.title`/`old.content`).
-- **`test/repository_test.dart`** — Only the original single CRUD test remained. The FTS update/delete index-maintenance test and the file-backed FTS repair marker regression test were both absent.
-- **`test/widget_test.dart`** — Reverted to a generic `MaterialApp`/`Scaffold` smoke test rather than the real `LocalFirstNotesApp` test with in-memory database and failure-safe `finally` teardown.
-- **`test/domain_copy_with_test.dart`** — The focused domain copy-semantics unit tests were absent.
+- **`domain/note.dart`** — `Note.copyWith` used a naive `??` for `folderId`, making it impossible for callers to explicitly clear a folder assignment by passing `folderId: null`.
+- **`domain/folder.dart`** — `Folder.copyWith` had the same defect for `parentFolderId`.
+- **`app.dart`** — The `dart:async` import and `unawaited(widget.database.close())` call in `_LocalFirstNotesAppState.dispose` were absent, leaving database lifecycle ownership ambiguous and leaking resources in tests.
+- **`app_database.dart`** — FTS5 installation had reverted to a bare `CREATE VIRTUAL TABLE IF NOT EXISTS` path with no `beforeOpen` hook, losing: trigger recreation on every open, the `app_metadata` table, the one-time `fts_rebuild_v1` repair marker, and the correct FTS5 delete trigger form (`old.title`/`old.content`).
+- **`test/repository_test.dart`** — Only the original single CRUD test remained. The FTS update/delete index-maintenance test and the file-backed FTS repair marker regression test were absent.
+- **`test/widget_test.dart`** — Reverted to a generic `MaterialApp`/`Scaffold` smoke test rather than a real `LocalFirstNotesApp` test with in-memory database and failure-safe `finally` teardown.
+- **`test/domain_copy_with_test.dart`** — Did not exist; focused domain copy-semantics unit tests were absent.
 
 ### Fixes Applied
 
-All regressions were corrected in a single pass:
+All deficiencies were corrected in a single pass:
 
-1. **`Note.copyWith` and `Folder.copyWith` sentinel fix** — Introduced a private `_unset` sentinel constant in both domain files. `folderId` and `parentFolderId` now default to `_unset` in `copyWith` and use `identical` to distinguish "omitted" from an explicit `null`. This restores all three states (preserve, replace, clear) needed for safe domain mutation.
+1. **`Note.copyWith` and `Folder.copyWith` sentinel fix** — Introduced a private `_unset` sentinel constant in both domain files. `folderId` and `parentFolderId` now default to `_unset` in `copyWith` and use `identical` to distinguish "omitted" from an explicit `null`, restoring all three states (preserve, replace, clear) needed for safe domain mutation.
 
 2. **`app.dart` database lifecycle** — Re-added the `dart:async` import and `_LocalFirstNotesAppState.dispose` override calling `unawaited(widget.database.close())`. The app root now owns the injected database lifetime and closes it on unmount, preventing resource leaks and test-harness hangs.
 
@@ -351,23 +42,25 @@ All regressions were corrected in a single pass:
 
 5. **`test/widget_test.dart` real app shell test** — Replaced the generic smoke test with one that builds `LocalFirstNotesApp` using an in-memory `AppDatabase`, verifies the tab bar and empty notes state, and wraps teardown in `finally` to unmount the app and drain Drift's stream cleanup timers with a positive-duration pump.
 
-6. **`test/domain_copy_with_test.dart` restored** — Re-added focused unit tests for all three `copyWith` behaviors (preserve, clear, replace) for both `Note.folderId` and `Folder.parentFolderId`.
+6. **`test/domain_copy_with_test.dart` created** — Added focused unit tests for all three `copyWith` behaviors (preserve, clear, replace) for both `Note.folderId` and `Folder.parentFolderId`.
 
-### Eleventh-Pass Verification
+### First-Pass Verification
 
 - `dart format` applied to all six edited files; six files changed.
 - `flutter analyze` completed with no issues.
 - `flutter test` completed successfully with all ten tests passing across `domain_copy_with_test.dart` (6), `repository_test.dart` (3), and `widget_test.dart` (1).
 
-## 2026-05-18 — Twelfth Review Pass
+---
+
+## 2026-05-18 — Second Review Pass
 
 ### Session Restart
 
-Started a twelfth engineering review pass. All implementation files were re-read and verified to be in the correct state from the prior session (eleventh pass), with all fixes intact. The standard quality gates confirmed ten tests passing and no analyzer issues before any changes were made.
+Started a second engineering review pass. All implementation files were re-read and verified to be in the correct state from the prior pass, with all fixes intact. Standard quality gates confirmed ten tests passing and no analyzer issues before any changes were made.
 
 ### Issues Found
 
-No correctness bugs or runtime regressions were identified in this pass. The following structural and quality issues were found and addressed:
+No correctness bugs or runtime regressions were identified. The following structural and quality issues were found and addressed:
 
 ### Refactoring: FTS Row-Mapping Deduplication
 
@@ -378,165 +71,160 @@ No correctness bugs or runtime regressions were identified in this pass. The fol
 ### Optimization: Linter Rule Enforcement
 
 - **Finding:** `analysis_options.yaml` had `prefer_single_quotes` and `avoid_print` commented out as examples, leaving two coding conventions that the codebase already followed unenforced by the static analyzer.
-- **Fix:** Enabled `avoid_print: true` and `prefer_single_quotes: true` in the `linter.rules` section. One double-quoted string literal in `repository_test.dart` (line 112) was found to violate `prefer_single_quotes` and was corrected to a single-quoted string.
+- **Fix:** Enabled `avoid_print: true` and `prefer_single_quotes: true` in the `linter.rules` section. One double-quoted string literal in `repository_test.dart` was found to violate `prefer_single_quotes` and was corrected.
 - **Architectural reasoning:** Enforcing these rules at the analyzer level makes them machine-verified rather than documentation-only, preventing silent violations in future contributions.
 
 ### Documentation: README Restored
 
-- **Finding:** `flutter_local_first/README.md` had regressed to the default Flutter template text, losing the project-specific architecture notes introduced in a prior pass.
+- **Finding:** `flutter_local_first/README.md` contained the default Flutter template text, losing project-specific architecture notes.
 - **Fix:** Replaced the template with a comprehensive project-specific README documenting the source layout, FTS5 design decisions (external-content index, trigger recreation strategy, one-time repair marker), reactive stream architecture, and the `copyWith` sentinel pattern for nullable domain fields.
 
-### Twelfth-Pass Verification
+### Second-Pass Verification
 
 - `dart format lib/data/local_repositories.dart test/repository_test.dart` applied; one file changed.
 - `flutter analyze` completed with no issues.
 - `flutter test` completed successfully with all ten tests passing.
 
-## 2026-05-18 — Thirteenth Review Pass
+---
+
+## 2026-05-18 — Third Review Pass
 
 ### Session Restart
 
-Started a thirteenth engineering review pass. Full re-read of all source files confirmed the codebase is in the correct state from the prior session. Standard quality gates verified: `flutter analyze` found no issues, and all ten tests pass (6 domain copy-with, 3 repository, 1 widget).
+Started a third engineering review pass. Full re-read of all source files confirmed the codebase is in the correct state from the prior pass. Standard quality gates verified: `flutter analyze` found no issues, and all ten tests pass (6 domain copy-with, 3 repository, 1 widget).
 
 ### Issues Found
 
 #### Bug: `fts5PrefixQuery` incorrectly double-escapes single quotes
 
 - **File:** `lib/data/local_repositories.dart`, function `fts5PrefixQuery`.
-- **Root cause:** The `escapeToken` closure applies two substitutions to the raw token: `"` → `""` and `'` → `''`. The first is correct — inside an FTS5 double-quoted phrase, a literal `"` must be written as `""`. However, `'` → `''` is a SQL string-literal escape sequence, not an FTS5 escape sequence. Inside an FTS5 double-quoted phrase (i.e., between `"` and `"*`), there is no valid escape for single quotes — apostrophes are treated as ordinary characters by the FTS5 tokenizer. Doubling them produces `''` inside the phrase, which FTS5 tries to match as the literal string `''` rather than as a single apostrophe. This causes any search containing an apostrophe (e.g., `"it's"`, `"don't"`) to fail to find notes that contain those terms.
-- **Fix:** Remove the `s.replaceAll("'", "''")` line from `escapeToken`. The FTS5 query string is passed as a bound parameter (`Variable.withString`), so no SQL-level escaping is needed at all. Only the FTS5 phrase quoting (surrounding with `"..."*` and doubling internal double-quotes) is required.
+- **Root cause:** The `escapeToken` closure applied two substitutions: `"` → `""` and `'` → `''`. The first is correct — inside an FTS5 double-quoted phrase, a literal `"` must be written as `""`. However, `'` → `''` is a SQL string-literal escape, not an FTS5 escape. Inside an FTS5 double-quoted phrase, apostrophes are treated as ordinary characters by the FTS5 tokenizer. Doubling them caused any search containing an apostrophe (e.g., `"it's"`, `"don't"`) to fail to find matching notes.
+- **Fix:** Removed the `s.replaceAll("'", "''")` line. The FTS5 query string is passed as a bound `Variable.withString` parameter, so no SQL-level escaping is needed. Only FTS5 phrase quoting (surrounding with `"..."*` and doubling internal double-quotes) is required.
 
 #### Issue: `_bindNoteStream` creates a new stream on every keystroke when mode is unchanged
 
 - **File:** `lib/app.dart`, `_NotesTabState._bindNoteStream`.
-- **Root cause:** Every call to `_bindNoteStream()` — triggered on every character typed or deleted — unconditionally reassigns `_noteStream` by calling either `watchNotes()` or `watchSearchResults()`. When the user is typing in the search field and the query is non-empty, each keystroke creates a new Drift `customSelect().watch()` stream. The `StreamBuilder` detects a new stream reference and resets to `ConnectionState.waiting`, briefly flashing a loading spinner before the first event arrives. The same unnecessary stream recreation happens when clearing the field one character at a time: `watchNotes()` is called repeatedly instead of once when the query first becomes empty.
-- **Fix:** Track the current search mode (`_isSearching`) and only rebind when the mode transitions between empty and non-empty, or when the query string changes while in search mode. This ensures each distinct query gets exactly one stream, and the browse/search mode toggle only creates new streams at the boundary.
+- **Root cause:** Every call to `_bindNoteStream()` — triggered on every character typed or deleted — unconditionally reassigned `_noteStream`. Each keystroke created a new Drift watch stream, causing `StreamBuilder` to reset to `ConnectionState.waiting` and briefly flash a loading spinner.
+- **Fix:** Added `_activeQuery` state tracking the query string the current `_noteStream` was built for. `_bindNoteStream` now short-circuits when `q == _activeQuery`, preventing unnecessary stream recreation on each keystroke.
 
-#### Dead code: `openLazyDatabaseFile` is unused
+#### Dead code: `openLazyDatabaseFile` unused
 
-- **File:** `lib/database/app_database.dart`, top-level function `openLazyDatabaseFile`.
-- **Root cause:** The function was added as a test/tooling helper for file-backed database access, but the actual file-backed test (`FTS5 repair marker triggers rebuild on next open`) creates its executor directly with `NativeDatabase(File(dbPath))`. The function is not referenced anywhere in the codebase.
-- **Fix:** Remove the function and its associated `dart:io` and `path` imports if they are no longer needed. (`dart:io` is still needed for the `File` type in the test, but `app_database.dart` no longer needs it directly.)
+- **File:** `lib/database/app_database.dart`.
+- **Root cause:** The function was never referenced anywhere in the codebase.
+- **Fix:** Removed the function and its associated unused imports (`dart:io`, `package:path/path.dart`, `package:drift/native.dart`).
 
 ### Bug Fix: `fts5PrefixQuery` single-quote escaping
 
-- Removed `s.replaceAll("'", "''")` from the `escapeToken` closure in `fts5PrefixQuery`. Single quotes are ordinary characters inside FTS5 double-quoted phrases and require no escaping. The `''` sequence is a SQL string-literal escape that is entirely inapplicable here because the FTS5 query is always passed as a bound `Variable.withString` parameter, not interpolated into raw SQL. The bug would cause any search query containing an apostrophe (e.g., `"don't"`, `"it's"`) to produce an FTS5 phrase that can never match any note.
-- Simplified `fts5PrefixQuery` to a single-expression map chain, removing the intermediate `escapeToken` local-function closure.
-- Removed an unnecessary `\"` escape in the string literal (`\"*` → `"*`) flagged by the `unnecessary_string_escapes` lint.
+- Removed the incorrect single-quote doubling. Simplified `fts5PrefixQuery` to a single-expression map chain, removing the intermediate `escapeToken` local-function closure. Removed an unnecessary `\"` escape in the string literal flagged by the `unnecessary_string_escapes` lint.
 
-### Fix: `_bindNoteStream` unnecessary stream recreation on every keystroke
+### Fix: `_bindNoteStream` unnecessary stream recreation
 
-- Added `_activeQuery` state to `_NotesTabState` tracking the query string the current `_noteStream` was built for.
-- `_bindNoteStream` now short-circuits when `q == _activeQuery`, preventing a new Drift watch stream from being created on every keystroke when the effective query string has not changed.
-- As an additional correctness improvement, `watchSearchResults` now receives the trimmed query `q` rather than the raw `_search.text`, so leading/trailing whitespace in the search field cannot produce a different stream than the empty browse stream.
-- Technical reasoning: the previous implementation caused `StreamBuilder` to reset to `ConnectionState.waiting` on every character typed or deleted, potentially flashing a loading spinner and discarding already-loaded results unnecessarily.
+- Added `_activeQuery` state to `_NotesTabState`. `_bindNoteStream` short-circuits when the effective query string has not changed, preventing `StreamBuilder` reset on every keystroke. `watchSearchResults` now receives the trimmed query `q` for consistency.
 
-### Dead Code Removal: `openLazyDatabaseFile`
+### Dead Code Removal
 
-- Removed the `openLazyDatabaseFile` top-level function from `app_database.dart`. The function was never called; the file-backed FTS repair marker test creates its database directly with `NativeDatabase(File(dbPath))`.
-- Removed the now-unused `import 'dart:io'` and `import 'package:path/path.dart' as p'` imports. Separately, removed the also-unused `import 'package:drift/native.dart'` that was uncovered by the analyzer after the function removal.
+- Removed `openLazyDatabaseFile` from `app_database.dart` and its associated unused imports.
 
 ### Test Coverage: `fts_query_test.dart`
 
 - Added `test/fts_query_test.dart` with 9 tests covering `fts5PrefixQuery` unit behaviour and an end-to-end FTS5 apostrophe-search scenario.
 - Unit tests cover: empty string, whitespace-only string, single-word phrase wrapping, multi-word AND joining, internal-whitespace collapsing, double-quote escaping, apostrophe preservation (the fixed bug), and multi-word apostrophe queries.
-- The end-to-end test inserts a note with `"Don't forget this"` as the title and `"It's important"` as the content, then verifies that `searchNotes("don't")` and `searchNotes("it's")` each return the note — directly proving the apostrophe bug is fixed.
+- The end-to-end test inserts a note with apostrophes in title and content, then verifies `searchNotes("don't")` and `searchNotes("it's")` each find the note.
 
-### Thirteenth-Pass Verification
+### Third-Pass Verification
 
 - `dart format` applied to all changed files; three files changed.
-- `flutter analyze` reported two issues during the first pass (unnecessary string escape and unused import), both fixed before committing.
-- `flutter analyze` on the second pass reported no issues.
+- `flutter analyze` passed on the second run (first run found and fixed two issues: unnecessary string escape and unused import).
 - `flutter test` completed successfully with all 19 tests passing: 6 domain copy-with, 3 repository, 9 fts_query (8 unit + 1 end-to-end), and 1 widget.
 
-## 2026-05-18 — Fourteenth Review Pass
+---
+
+## 2026-05-18 — Fourth Review Pass
 
 ### Session Restart
 
-Started a fourteenth engineering review pass. All source files were re-read and the standard quality gates confirmed the codebase is clean: `flutter analyze` found no issues and all 19 tests pass.
+Started a fourth engineering review pass. All source files were re-read and the standard quality gates confirmed the codebase is clean: `flutter analyze` found no issues and all 19 tests pass.
 
 ### Issues Found
 
 #### Bug: `pubspec.yaml` lists `path` as a production dependency
 
 - **File:** `pubspec.yaml`, `dependencies` section.
-- **Root cause:** `path: ^1.9.1` was listed under `dependencies` rather than `dev_dependencies`. The `path` package is only imported in `test/repository_test.dart` for constructing temporary SQLite file paths during the FTS repair marker regression test. No file under `lib/` imports `package:path`. Shipping `path` as a runtime dependency unnecessarily inflates the app's dependency graph.
-- **Fix:** Move `path: ^1.9.1` from `dependencies` to `dev_dependencies`.
+- **Root cause:** `path: ^1.9.1` was listed under `dependencies` rather than `dev_dependencies`. The `path` package is only imported in `test/repository_test.dart` for constructing temporary SQLite file paths. No file under `lib/` imports it. Shipping `path` as a runtime dependency unnecessarily inflates the app's dependency graph.
+- **Fix:** Moved `path: ^1.9.1` from `dependencies` to `dev_dependencies`.
 
 #### Issue: `_NotesTabState.build` reads `_search.text` for the empty-state message
 
 - **File:** `lib/app.dart`, `_NotesTabState.build`.
-- **Root cause:** The build method reads `final q = _search.text` and then evaluates `q.trim().isEmpty` to decide whether to show `'No notes yet'` or `'No matches'`. Since `_activeQuery` was introduced in the prior pass as the authoritative trimmed query string that controls which stream is active, reading `_search.text.trim()` during build is redundant. In cases where `_search.text` has leading/trailing spaces, `_search.text.trim()` and `_activeQuery` could produce different results, causing the UI message to disagree with the stream that is actually active.
-- **Fix:** Replace `final q = _search.text` with a read of `_activeQuery` in the build method's empty-state decision. This ensures the displayed message always matches the stream that was started.
+- **Root cause:** The build method read `final q = _search.text` and evaluated `q.trim().isEmpty` to decide whether to show `'No notes yet'` or `'No matches'`. Since `_activeQuery` is the authoritative trimmed query string controlling which stream is active, reading `_search.text.trim()` was a redundant secondary read that could disagree with `_activeQuery` if the field had leading/trailing whitespace.
+- **Fix:** Replaced `final q = _search.text` with a read of `_activeQuery`. The empty-state message now always matches the stream that is active.
 
-#### Optimization: `_installFts5` makes 8 sequential single-statement round-trips
+#### Optimization: `_installFts5` trigger DDL wrapped in a single transaction
 
 - **File:** `lib/database/app_database.dart`, `_installFts5`.
-- **Root cause:** The FTS5 installation path issues each DDL statement as an individual `customStatement` call. In SQLite, each call outside an explicit transaction is wrapped in its own implicit transaction, resulting in 8 separate write transactions and associated fsync overhead on real storage.
-- **Fix:** Wrap the trigger DROP and CREATE statements (6 of the 8 calls) in an explicit `db.transaction(...)` block, reducing them to a single transaction commit. The `CREATE TABLE IF NOT EXISTS app_metadata` and `CREATE VIRTUAL TABLE IF NOT EXISTS fts_notes` calls are placed before the transaction since SQLite cannot DDL virtual tables inside a transaction on all platforms.
-- **Expected gain:** On a real device's storage, startup DDL cost is reduced from up to 8 transaction commits to at most 3 (one for app_metadata, one for fts_notes, one for all trigger drops and recreations). The FTS rebuild statement, when it runs, remains outside the trigger transaction since it is already a virtual-table content operation.
+- **Root cause:** Each of the 6 trigger DDL statements was committed as a separate implicit SQLite transaction, resulting in up to 6 fsync calls at every database open.
+- **Fix:** Wrapped the 3 DROP and 3 CREATE trigger statements in a single `db.transaction(...)` block, reducing them to one transaction commit. The `CREATE TABLE IF NOT EXISTS app_metadata` and `CREATE VIRTUAL TABLE IF NOT EXISTS fts_notes` calls remain outside the transaction because SQLite restricts virtual-table DDL in certain transaction contexts.
+- **Expected gain:** On a cold device with real persistent storage, the FTS startup overhead is reduced from up to 8 transaction commits to at most 3.
 
 ### Fix: `path` moved to `dev_dependencies`
 
-- Moved `path: ^1.9.1` from `dependencies` to `dev_dependencies` in `pubspec.yaml`. The `path` package is only imported in `test/repository_test.dart` for constructing temporary SQLite file paths; no production source file under `lib/` imports it. Placing it in `dependencies` meant it was shipped as a runtime dependency in app bundles unnecessarily.
-- Ran `dart pub get` to apply the change; 1 dependency changed.
+- Moved `path: ^1.9.1` from `dependencies` to `dev_dependencies` in `pubspec.yaml`. Ran `dart pub get` to apply the change.
 
 ### Fix: `_NotesTabState.build` uses `_activeQuery` for empty-state message
 
-- Replaced `final q = _search.text` and `q.trim().isEmpty` with `_activeQuery.isEmpty` in the `StreamBuilder` builder of `_NotesTabState.build`.
-- `_activeQuery` is the authoritative trimmed query string that controls which stream is active. Reading `_search.text.trim()` during build was a redundant secondary read from the `TextEditingController` that could disagree with `_activeQuery` if the field had leading/trailing whitespace. The empty-state message now always matches the stream.
+- Replaced `_search.text.trim().isEmpty` with `_activeQuery.isEmpty` in the `StreamBuilder` builder. `_activeQuery` is the authoritative trimmed query string that controls which stream is active.
 
-### Optimization: `_installFts5` trigger DDL wrapped in a single transaction
+### Optimization: `_installFts5` trigger DDL transaction
 
-- Wrapped the 3 DROP and 3 CREATE trigger statements in `_installFts5` in a single `db.transaction(...)` call.
-- Previous behaviour: each of the 6 DDL statements was committed as a separate implicit SQLite transaction (up to 6 fsync calls on WAL-mode storage).
-- New behaviour: all 6 trigger DDL statements are committed atomically in one transaction (1 fsync for trigger setup). The `CREATE TABLE IF NOT EXISTS app_metadata` and `CREATE VIRTUAL TABLE IF NOT EXISTS fts_notes` calls remain outside the transaction because SQLite restricts virtual-table DDL in certain transaction contexts. The FTS5 rebuild statement, when it runs, also remains outside since it is a virtual-table content operation.
-- Expected gain: on a cold device with real persistent storage, the FTS startup overhead is reduced from up to 8 transaction commits to at most 3.
+- Wrapped the 6 trigger DDL statements in a single `db.transaction(...)` call. The FTS5 rebuild statement, when it runs, remains outside since it is a virtual-table content operation.
 
-### Fourteenth-Pass Verification
+### Fourth-Pass Verification
 
 - `dart format lib/app.dart lib/database/app_database.dart` — no formatting changes required.
 - `flutter analyze` — no issues found.
 - `flutter test` — all 19 tests passed.
 
-## 2026-05-18 — Fifteenth Review Pass
+---
+
+## 2026-05-18 — Fifth Review Pass
 
 ### Session Restart
 
-Started a fifteenth engineering review pass. Full re-read of every source file completed before making any judgements: `app_database.dart`, `app.dart`, `local_repositories.dart`, `note.dart`, `folder.dart`, `tables.dart`, `bootstrap.dart`, `pubspec.yaml`, `analysis_options.yaml`, and all four test files.
+Started a fifth engineering review pass. Full re-read of every source file completed before making any judgements.
 
-### Pre-work Verification
+### Pre-Pass Verification
 
-Standard quality gates run first: `flutter analyze` found no issues; all 19 tests passed across `domain_copy_with_test.dart` (6), `repository_test.dart` (3), `fts_query_test.dart` (9), and `widget_test.dart` (1). `dart format --set-exit-if-changed lib/ test/` reported zero files changed. `grep` across all Dart files found no `TODO`, `FIXME`, `HACK`, `XXX`, `TEMP`, or `print(` markers.
+Standard quality gates run first: `flutter analyze` found no issues; all 19 tests passed across `domain_copy_with_test.dart` (6), `repository_test.dart` (3), `fts_query_test.dart` (9), and `widget_test.dart` (1). `dart format --set-exit-if-changed lib/ test/` reported zero files changed. No `TODO`, `FIXME`, `HACK`, `XXX`, `TEMP`, or `print(` markers found across all Dart files.
 
 ### Findings
 
-A thorough line-by-line review of the full codebase surfaced no new bugs, correctness issues, refactoring opportunities, or optimization candidates that are not already addressed. Specific areas verified without finding issues:
+A thorough line-by-line review of the full codebase surfaced no new bugs, correctness issues, refactoring opportunities, or optimization candidates. Specific areas verified without finding issues:
 
-- **`_unset` sentinels in `note.dart` and `folder.dart`**: `const _unset = Object()` is valid Dart — `Object()` has a `const` constructor and the analyzer confirms no issue. The `identical` comparison within each file correctly uses the file-local sentinel instance.
-- **`_installFts5` transaction boundary**: The trigger transaction wraps only DDL, which SQLite supports in explicit transactions. The `CREATE TABLE IF NOT EXISTS app_metadata` and `CREATE VIRTUAL TABLE IF NOT EXISTS fts_notes` statements outside the transaction are correct because certain SQLite platforms restrict virtual table DDL inside nested transactions.
-- **`fts5PrefixQuery` FTS5 compliance**: Confirmed that `"token"*` is the correct FTS5 prefix syntax, `""` is the only escape needed inside a double-quoted FTS5 phrase, and bound parameters bypass all SQL-level escaping concerns.
-- **`watchNotes` `combineLatest2` usage**: Correctly combines notes and tags streams; using `rxdart` here is appropriate since Drift's built-in watch only tracks one table at a time.
+- **`_unset` sentinels in `note.dart` and `folder.dart`**: `const _unset = Object()` is valid Dart; the `identical` comparison correctly uses the file-local sentinel instance.
+- **`_installFts5` transaction boundary**: The trigger transaction wraps only DDL, which SQLite supports. The `CREATE TABLE IF NOT EXISTS app_metadata` and `CREATE VIRTUAL TABLE IF NOT EXISTS fts_notes` statements outside the transaction are correct because certain SQLite platforms restrict virtual table DDL inside nested transactions.
+- **`fts5PrefixQuery` FTS5 compliance**: `"token"*` is the correct FTS5 prefix syntax; `""` is the only escape needed inside a double-quoted FTS5 phrase; bound parameters bypass all SQL-level escaping.
 - **`upsertNote` transaction correctness**: Delete-then-batch-insert for tags inside a transaction is correct; avoids partial tag updates visible to readers between the delete and the re-insert.
 - **`pubspec.yaml` dependency graph**: `path` is correctly in `dev_dependencies`; all runtime dependencies are justified.
 - **`analysis_options.yaml`**: `prefer_single_quotes` and `avoid_print` are correctly enabled and enforced throughout the codebase.
 
-### Fifteenth-Pass Conclusion
+### Fifth-Pass Conclusion
 
 No implementation changes are warranted. The codebase is clean, well-tested (19 passing tests across all layers), correctly formatted, and has no outstanding issues. This pass is recorded to maintain traceability of the review cycle.
 
-## 2026-05-18 — Sixteenth Review Pass
+---
+
+## 2026-05-18 — Sixth Review Pass
 
 ### Session Restart
 
-Started a sixteenth engineering review pass. Full re-read of all source files completed. Standard quality gates confirmed: `flutter analyze` found no issues, all 19 tests pass, and `dart format` reports zero changes needed.
+Started a sixth engineering review pass. Full re-read of all source files completed. Standard quality gates confirmed: `flutter analyze` no issues, all 19 tests pass, `dart format` zero changes needed.
 
 ### Issue Found: `Note` and `Folder` are value objects without value equality
 
 - **Files:** `lib/domain/note.dart`, `lib/domain/folder.dart`.
-- **Root cause:** Both `Note` and `Folder` are immutable domain models with `const` constructors, representing pure value objects. Neither overrides `operator ==` or `hashCode`. The default `Object` identity equality means two structurally identical `Note` instances (e.g., produced by re-mapping the same database row on consecutive stream emissions) compare as unequal. This has two concrete consequences:
-  1. Any deduplication or change-detection layer above (e.g., future `Equatable` mixin usage, `Set<Note>`, or reactive stream operators like `distinctUnique`) cannot function correctly.
-  2. Widget equality checks based on note identity — such as a `const` key strategy or `ValueKey(note)` — will always see changes even when data is unchanged.
+- **Root cause:** Both `Note` and `Folder` are immutable domain models representing pure value objects. Neither overrides `operator ==` or `hashCode`. The default `Object` identity equality means two structurally identical `Note` instances (e.g., produced by re-mapping the same database row on consecutive stream emissions) compare as unequal. This has two concrete consequences:
+  1. Any deduplication or change-detection layer above (e.g., `Set<Note>`, or reactive stream operators like `distinctUnique`) cannot function correctly.
+  2. Widget equality checks based on note identity — such as `ValueKey(note)` — will always see changes even when data is unchanged.
 - **Fix:** Implement `operator ==` and `hashCode` on both `Note` and `Folder` using all persistent fields. For `Note`, the tag list is compared by value using `const ListEquality` from `package:collection` (already a transitive dependency through Drift). For `Folder`, all four fields are included.
 - **Note:** `toString()` overrides are also added to both models to provide readable debug representations, consistent with value-object semantics.
 
@@ -553,7 +241,7 @@ Started a sixteenth engineering review pass. Full re-read of all source files co
 - `Note equality` tests cover: self-equality, structural equality with matching `hashCode`, inequality on `id`, inequality on different-length `tags`, inequality on tag-order difference (confirming list ordering is preserved in equality), and inequality on `folderId` presence.
 - `Folder equality` tests cover: self-equality, structural equality with matching `hashCode`, inequality on `sortOrder`, and inequality on `parentFolderId` presence.
 
-### Sixteenth-Pass Verification
+### Sixth-Pass Verification
 
 - `dart format lib/domain/note.dart lib/domain/folder.dart test/domain_copy_with_test.dart` — one file changed (`note.dart` after formatter adjustment).
 - First `flutter analyze` pass found one issue: `depend_on_referenced_packages` for `package:collection`. Fixed by adding `collection: ^1.18.0` to `pubspec.yaml` dependencies.
@@ -562,52 +250,52 @@ Started a sixteenth engineering review pass. Full re-read of all source files co
 
 ---
 
-## 2026-05-18 — Seventeenth Review Pass
+## 2026-05-18 — Seventh Review Pass
 
 ### Session Restart
 
-Started a seventeenth engineering review pass. Fresh full read of all source files completed. Quality gates confirmed clean: `flutter analyze` no issues, all 29 tests pass, `dart format` zero changes.
+Started a seventh engineering review pass. Fresh full read of all source files completed. Quality gates confirmed clean: `flutter analyze` no issues, all 29 tests pass, `dart format` zero changes.
 
 ### Issues Found
 
-#### Issue 1 — `Note.tags` mutability inconsistency across repository methods
+#### Issue 1 — `Note.tags` tag-sort logic duplicated across repository read paths
 
 - **File:** `lib/data/local_repositories.dart`
-- **Root cause:** `watchNotes()` and `searchNotes()`/`watchSearchResults()` both wrap the tags list in `List.unmodifiable(...)` before constructing a `Note`. However, `getNoteById()` passes the result of `tags.map((e) => e.tag).toList()..sort()` — a plain mutable `List<String>` — directly into `_noteFromRow`. Since `_noteFromRow` also wraps in `List.unmodifiable`, this path is actually fine. On closer inspection the inconsistency is in `_notesFromSearchRows`, which calls `List.unmodifiable(List<String>.from(...))` adding a redundant copy when `byNote[id] ?? const []` already produces a list that `List.unmodifiable` could wrap directly. The real issue is that `getNoteById` does the sort *outside* `_noteFromRow` rather than using the shared `_tagsByNoteId` helper, making the tag-sort logic duplicated.
-- **Fix:** Unify tag preparation in `getNoteById` to mirror the path used by `watchNotes`: fetch tag rows, build a `byNote` map via `_tagsByNoteId` (which sorts inline), then call `_noteFromRow` with `byNote[id] ?? const []`. This removes the inline `..sort()` and ensures all three read paths use identical tag-ordering logic.
+- **Root cause:** `getNoteById()` did the sort outside `_noteFromRow` via an inline `..sort()`, rather than using the shared `_tagsByNoteId` helper. All three read paths (`watchNotes`, `searchNotes`/`watchSearchResults`, `getNoteById`) should use identical tag-ordering logic.
+- **Fix:** Unified `getNoteById` to use `_tagsByNoteId()`, removing the inline `..sort()`.
 
 #### Issue 2 — `watchNotes()` fetches the entire `note_tags` table on every emission
 
 - **File:** `lib/data/local_repositories.dart`
-- **Root cause:** `watchNotes()` combines `notes$.watch()` with `_db.select(_db.noteTags).watch()` — an unbounded query that returns every tag row for every note in the database on every reactive update, whether or not any tags changed. As the tag table grows this degrades into an O(total-tags) read on every single note or tag change.
-- **Fix:** Scope the tags watch to only the note IDs currently emitted by `notes$`. This is done by switching from `Rx.combineLatest2` with a separate unbounded tags stream to an `asyncMap` that fetches tags for only the current page of note IDs — identical to the pattern already used by `watchSearchResults`. The result is O(notes-on-screen × tags-per-note) instead of O(all-tags).
+- **Root cause:** `watchNotes()` combined `notes$.watch()` with `_db.select(_db.noteTags).watch()` — an unbounded query returning every tag row in the database on every reactive update. As the tag table grows this degrades into an O(total-tags) read on every single note or tag change.
+- **Fix:** Switched from `Rx.combineLatest2` with an unbounded tags stream to an `asyncMap` that fetches tags for only the current page of note IDs — identical to the pattern already used by `watchSearchResults`. The result is O(notes-on-screen × tags-per-note) instead of O(all-tags).
 
 #### Issue 3 — `ListTile.isThreeLine: true` applied unconditionally in `_NotesTab`
 
 - **File:** `lib/app.dart`
-- **Root cause:** `isThreeLine: true` reserves vertical space for a third subtitle line unconditionally, regardless of how much text the subtitle actually contains. Because `maxLines: 2` is set on the subtitle, the third reserved line is never filled — resulting in a permanent blank gap below every list item. The correct approach is to omit `isThreeLine` (defaults to `false`) and rely on Flutter's `ListTile` sizing to fit the actual two-line subtitle.
-- **Fix:** Remove `isThreeLine: true` from the `ListTile` in `_NotesTabState.build`.
+- **Root cause:** `isThreeLine: true` reserves vertical space for a third subtitle line unconditionally. Because `maxLines: 2` is set on the subtitle, the third reserved line is never filled — resulting in a permanent blank gap below every list item.
+- **Fix:** Removed `isThreeLine: true` from the `ListTile` in `_NotesTabState.build`.
 
 #### Issue 4 — Superfluous `toSet()` allocation in `upsertNote`
 
 - **File:** `lib/data/local_repositories.dart`
-- **Root cause:** `upsertNote` iterates `note.tags.toSet()` before inserting into `NoteTags`. The `NoteTags` table has a composite primary key `(noteId, tag)`, and the delete-before-insert pattern in the enclosing transaction already guarantees a clean state. The `toSet()` creates an intermediate `Set<String>` heap object purely to deduplicate tags that should not be duplicated in a well-formed domain object in the first place. Callers who construct `Note` with duplicate tags have a data-model bug; the persistence layer is not the correct place to silently mask it.
-- **Fix:** Remove `.toSet()` and iterate `note.tags` directly. This eliminates the unnecessary allocation on every write path.
+- **Root cause:** `upsertNote` iterated `note.tags.toSet()`, creating an intermediate `Set<String>` heap object. The delete-before-insert transaction pattern already guarantees a clean slate; the deduplication is redundant and the wrong layer for this concern.
+- **Fix:** Removed `.toSet()` and iterate `note.tags` directly.
 
 ### Fixes Applied
 
 #### `lib/data/local_repositories.dart`
 
-- **`watchNotes()` refactored** from `Rx.combineLatest2(notes$, tags$, ...)` to `notes$.watch().asyncMap(...)`. The `asyncMap` handler scopes the `noteTags` query to only the IDs in the current emission via `WHERE note_id IN (...)`. This reduces the tag-read from O(all-tags) to O(tags-for-visible-notes) on every reactive update. Behavioral contract is preserved: `upsertNote` always writes to the notes row before touching tags, so the notes-table watch will fire on every application-driven write, and `asyncMap` will then fetch the freshest tags for that batch.
-- **Consequence: `rxdart` import removed.** `Rx.combineLatest2` was the only use of `package:rxdart` in the entire codebase. With the import removed, `rxdart: ^0.28.0` was also removed from `pubspec.yaml` `dependencies`. This reduces the dependency graph by one package.
-- **`getNoteById()` unified** to use `_tagsByNoteId()` (the shared sort-and-group helper) rather than an inline `..sort()` on a raw tag list. All three read paths (`watchNotes`, `searchNotes`/`watchSearchResults`, `getNoteById`) now use identical tag-ordering logic.
+- **`watchNotes()` refactored** from `Rx.combineLatest2(notes$, tags$, ...)` to `notes$.watch().asyncMap(...)`. The `asyncMap` handler scopes the `noteTags` query to only the IDs in the current emission via `WHERE note_id IN (...)`. Behavioral contract is preserved: `upsertNote` always writes the notes row before touching tags, so the notes-table watch fires on every application-driven write, and `asyncMap` fetches the freshest tags for that batch.
+- **Consequence: `rxdart` import and dependency removed.** `Rx.combineLatest2` was the only use of `package:rxdart`. With the import removed, `rxdart: ^0.28.0` was also removed from `pubspec.yaml`, reducing the dependency graph by one package.
+- **`getNoteById()` unified** to use `_tagsByNoteId()`. All three read paths (`watchNotes`, `searchNotes`/`watchSearchResults`, `getNoteById`) now use identical tag-ordering logic.
 - **`upsertNote()` `toSet()` removed.** Iterates `note.tags` directly, eliminating a heap allocation on every write.
 
 #### `lib/app.dart`
 
-- **`isThreeLine: true` removed** from the `ListTile` in `_NotesTabState.build`. With `maxLines: 2` on the subtitle, the third line slot was always empty, leaving a permanent vertical gap below every note card. Removing `isThreeLine` lets Flutter size each `ListTile` to its actual subtitle height.
+- **`isThreeLine: true` removed** from the `ListTile` in `_NotesTabState.build`. Removing `isThreeLine` lets Flutter size each `ListTile` to its actual subtitle height.
 
-### Seventeenth-Pass Verification
+### Seventh-Pass Verification
 
 - `flutter analyze`: no issues.
 - `dart format`: one file changed (`lib/data/local_repositories.dart` after formatter run).
@@ -615,7 +303,7 @@ Started a seventeenth engineering review pass. Fresh full read of all source fil
 
 ---
 
-## 2026-05-18 — Eighteenth Review Pass
+## 2026-05-18 — Eighth Review Pass
 
 ### Session Restart
 
@@ -623,27 +311,27 @@ Fresh full read of all 13 source files and all 4 test files completed. Quality g
 
 ### Issues Found
 
-#### Issue 1 — Redundant `List<String>.from()` copy in `_notesFromSearchRows`
+#### Issue 1 — Redundant `List<String>.from()` copy in tag-list construction
 
-- **File:** `lib/data/local_repositories.dart`, line 53.
-- **Root cause:** `_notesFromSearchRows` builds each `Note`'s tag list as `List.unmodifiable(List<String>.from(byNote[id] ?? const []))`. The inner `List<String>.from(x)` creates a full copy of the sorted list returned by `_tagsByNoteId`, and `List.unmodifiable` then wraps that copy. The copy is unnecessary: `_tagsByNoteId` returns a newly-built `List<String>` from a locally-scoped `Map` that is discarded after this call. Wrapping the map's value directly in `List.unmodifiable` is safe and avoids the allocation.
-- **Fix:** Replace `List.unmodifiable(List<String>.from(byNote[id] ?? const []))` with `List.unmodifiable(byNote[id] ?? const [])`. The same redundant-copy pattern exists in `watchNotes()` and `getNoteById()`, which pass `List<String>.from(byNote[...] ?? const [])` to `_noteFromRow`. Since `_noteFromRow` already wraps in `List.unmodifiable`, the `List<String>.from()` copies in those callers are equally redundant. Fix all three call sites.
+- **File:** `lib/data/local_repositories.dart`.
+- **Root cause:** Three call sites — `_notesFromSearchRows`, `watchNotes()`, and `getNoteById()` — each called `List<String>.from(byNote[...] ?? const [])` before passing the result to `List.unmodifiable` or `_noteFromRow`. Since `_tagsByNoteId` returns a newly-built `List<String>` from a locally-scoped `Map` that is discarded after use, the copy is entirely unnecessary. `List.unmodifiable` can wrap the map's value directly.
+- **Fix:** Removed the redundant `List<String>.from(...)` intermediate copy at all three call sites. This eliminates one heap allocation per note per read path.
 
 #### Issue 2 — `Note` and `Folder` constructors have no invariant assertions
 
-- **File:** `lib/domain/note.dart`, `lib/domain/folder.dart`.
-- **Root cause:** Both domain models are treated as value objects with strict semantics, but their constructors accept structurally invalid data silently. A `Note` with an empty `id`, or a `Note` whose `createdAt` is strictly after `updatedAt`, represents a data-model violation that will propagate to the database and cause subtle integrity issues. A `Folder` with an empty `id` or a negative `sortOrder` is similarly invalid. Dart `assert` statements are the canonical way to encode constructor pre-conditions: they are checked in debug and test mode, cost nothing in release mode, and provide immediate, informative failures during development.
-- **Fix:** Add `assert(id.isNotEmpty)` to both `Note` and `Folder`. Add `assert(!createdAt.isAfter(updatedAt))` to `Note`. Add `assert(sortOrder >= 0)` to `Folder`.
+- **Files:** `lib/domain/note.dart`, `lib/domain/folder.dart`.
+- **Root cause:** Both domain models accepted structurally invalid data silently. A `Note` with an empty `id`, or a `Note` whose `createdAt` is strictly after `updatedAt`, represents a data-model violation that will propagate to the database and cause subtle integrity issues. A `Folder` with an empty `id` or a negative `sortOrder` is similarly invalid. Dart `assert` statements are the canonical way to encode constructor pre-conditions: they are checked in debug and test mode and cost nothing in release mode.
+- **Fix:** Added `assert(id != '', ...)` to both `Note` and `Folder`. Added `assert(!createdAt.isAfter(updatedAt), ...)` to `Note`. Added `assert(sortOrder >= 0, ...)` to `Folder`.
 
 ### Fixes Applied
 
 #### `lib/data/local_repositories.dart`
 
-- Removed three redundant `List<String>.from(...)` copies across `_notesFromSearchRows`, `watchNotes()`, and `getNoteById()`. Each call site previously copied the sorted `List<String>` from `_tagsByNoteId`'s map before passing it to `List.unmodifiable`. Since the map is locally scoped and discarded after use, the mutable list can be wrapped directly in `List.unmodifiable` with no copy. This eliminates one heap allocation per note per read path.
+- Removed three redundant `List<String>.from(...)` copies across `_notesFromSearchRows`, `watchNotes()`, and `getNoteById()`. The mutable list from `_tagsByNoteId` can be wrapped directly in `List.unmodifiable` since the map is discarded immediately after use.
 
 #### `lib/domain/note.dart`
 
-- Removed `const` from the `Note` constructor. The `assert(!createdAt.isAfter(updatedAt), ...)` condition calls `DateTime.isAfter`, which is a non-constant method and cannot appear in a `const` constructor. `const Note(...)` was never used anywhere in the codebase (confirmed by grep), so this change has no call-site impact.
+- Removed `const` from the `Note` constructor. The `assert(!createdAt.isAfter(updatedAt), ...)` condition calls `DateTime.isAfter`, a non-constant method incompatible with `const` constructors. `const Note(...)` was never used anywhere in the codebase, so there is no call-site impact.
 - Added `assert(id != '', 'Note.id must not be empty')`.
 - Added `assert(!createdAt.isAfter(updatedAt), 'Note.createdAt must not be after updatedAt')`.
 
@@ -657,7 +345,7 @@ Fresh full read of all 13 source files and all 4 test files completed. Quality g
 - Added `Note invariants` group (3 tests): empty-id assert, `createdAt > updatedAt` assert, and a positive case confirming equal timestamps are valid.
 - Added `Folder invariants` group (3 tests): empty-id assert, negative-`sortOrder` assert, and a positive case confirming zero `sortOrder` is valid.
 
-### Eighteenth-Pass Verification
+### Eighth-Pass Verification
 
 - `flutter analyze`: no issues (two passes — first found the `const` + `isAfter` incompatibility, second was clean after `const` removal).
 - `dart format`: 3 files reformatted on first run, 0 on second.
@@ -665,7 +353,7 @@ Fresh full read of all 13 source files and all 4 test files completed. Quality g
 
 ---
 
-## 2026-05-18 — Nineteenth Review Pass
+## 2026-05-18 — Ninth Review Pass
 
 ### Session Restart
 
@@ -673,28 +361,28 @@ Full re-read of all 13 source files and 4 test files completed. Quality gates co
 
 ### Issues Found
 
-#### Issue 1 — `_installFts5` runs two DDL statements as separate implicit transactions before the existing explicit transaction block
+#### Issue 1 — `_installFts5` runs two DDL statements as separate implicit transactions
 
-- **File:** `lib/database/app_database.dart`, lines 46–60.
-- **Root cause:** `CREATE TABLE IF NOT EXISTS app_metadata` and `CREATE VIRTUAL TABLE IF NOT EXISTS fts_notes` are each issued as a standalone `customStatement` outside any explicit transaction. In SQLite, every statement outside an explicit transaction is automatically wrapped in its own implicit transaction, which requires a full fsync to the WAL or journal on disk. These two standalone DDL statements therefore cost two additional fsyncs at every database open, before the existing `db.transaction()` block (which already batches the six trigger DDL statements into one fsync). Consolidating all eight DDL statements — table creation, virtual table creation, and trigger recreation — into a single explicit transaction reduces the open-time DDL cost from three fsync boundaries to one.
-- **Fix:** Move the `CREATE TABLE IF NOT EXISTS app_metadata` and `CREATE VIRTUAL TABLE IF NOT EXISTS fts_notes` statements inside the existing `db.transaction()` block, reordering so the table and virtual-table creation come before the trigger drops and recreations.
+- **File:** `lib/database/app_database.dart`.
+- **Root cause:** `CREATE TABLE IF NOT EXISTS app_metadata` and `CREATE VIRTUAL TABLE IF NOT EXISTS fts_notes` were issued as standalone `customStatement` calls outside any explicit transaction. In SQLite, every statement outside an explicit transaction is wrapped in its own implicit transaction, requiring a full fsync. These two standalone DDL statements cost two additional fsyncs at every database open, before the existing `db.transaction()` block that already batches the six trigger DDL statements. Consolidating all eight DDL statements into one explicit transaction reduces open-time DDL cost from three fsync boundaries to one.
+- **Fix:** Moved the `CREATE TABLE IF NOT EXISTS app_metadata` and `CREATE VIRTUAL TABLE IF NOT EXISTS fts_notes` statements inside the existing `db.transaction()` block, reordered so the table and virtual-table creation come before the trigger drops and recreations.
 
-#### Issue 2 — `FoldersLocalRepository` has no `getFolderById` method; API is asymmetric with `NotesLocalRepository`
+#### Issue 2 — `FoldersLocalRepository` lacks `getFolderById`; API is asymmetric with `NotesLocalRepository`
 
 - **File:** `lib/data/local_repositories.dart`.
-- **Root cause:** `NotesLocalRepository` exposes `getNoteById(String id) → Future<Note?>` for single-item lookups by primary key. `FoldersLocalRepository` has no equivalent `getFolderById`. Since both are reference implementation repositories used as examples of the local-first pattern, the asymmetry makes `FoldersLocalRepository` an incomplete API surface. Any caller needing a single folder by ID must filter the full `watchFolders()` stream, which is reactive and synchronously unavailable.
-- **Fix:** Add `getFolderById(String id) → Future<Folder?>` to `FoldersLocalRepository`.
+- **Root cause:** `NotesLocalRepository` exposes `getNoteById(String id) → Future<Note?>` for single-item lookups. `FoldersLocalRepository` had no equivalent. Since both are reference implementation repositories, the asymmetry makes `FoldersLocalRepository` an incomplete API surface.
+- **Fix:** Added `getFolderById(String id) → Future<Folder?>` to `FoldersLocalRepository`.
 
 #### Issue 3 (Deferred) — Missing database indexes on `notes.updatedAt`, `notes.folderId`, and `folders.parentFolderId`
 
-- **Root cause:** `notes` is queried with `ORDER BY updated_at DESC`; `notes.folderId` and `folders.parentFolderId` are used for relational lookups and hierarchical traversal. None of these columns have explicit indexes — SQLite performs a full table scan for each. For a benchmark/reference app with small data, this is not a performance issue today. Adding indexes requires a schema version bump (`schemaVersion = 3`) and a corresponding `onUpgrade` migration.
-- **Decision:** Deferred. Documented here as a known future optimization to be addressed when the schema next requires a version bump for another reason. Combining an index migration with a schema-driven change avoids a migration that exists solely to add indexes.
+- **Root cause:** `notes` is queried with `ORDER BY updated_at DESC`; `notes.folderId` and `folders.parentFolderId` are used for relational lookups. None of these columns have explicit indexes. For a benchmark/reference app with small data, this is not a performance issue today. Adding indexes requires a schema version bump (`schemaVersion = 3`) and a corresponding `onUpgrade` migration.
+- **Decision:** Deferred. To be addressed when the schema next requires a version bump for another reason, to avoid a migration whose sole purpose is adding indexes.
 
 ### Fixes Applied
 
 #### `lib/database/app_database.dart`
 
-- Consolidated all 8 `_installFts5` DDL statements — `CREATE TABLE IF NOT EXISTS app_metadata`, `CREATE VIRTUAL TABLE IF NOT EXISTS fts_notes`, and the 6 trigger `DROP`/`CREATE` statements — into a single `db.transaction()` block. Previously, the two table-creation statements were issued outside the transaction as standalone `customStatement` calls, each triggering its own implicit SQLite transaction and fsync. The consolidated single transaction reduces open-time DDL I/O from three fsync boundaries to one.
+- Consolidated all 8 `_installFts5` DDL statements — `CREATE TABLE IF NOT EXISTS app_metadata`, `CREATE VIRTUAL TABLE IF NOT EXISTS fts_notes`, and the 6 trigger `DROP`/`CREATE` statements — into a single `db.transaction()` block. The consolidated single transaction reduces open-time DDL I/O from three fsync boundaries to one.
 
 #### `lib/data/local_repositories.dart`
 
@@ -706,7 +394,7 @@ Full re-read of all 13 source files and 4 test files completed. Quality gates co
 - Added `FoldersLocalRepository getFolderById returns null for unknown id` test.
 - Added `FoldersLocalRepository upsert and getFolderById round-trip` test: upserts a folder, verifies retrieval with value equality (exercising `Folder ==`), then updates via upsert and confirms the change.
 
-### Nineteenth-Pass Verification
+### Ninth-Pass Verification
 
 - `flutter analyze`: no issues.
 - `dart format`: 1 file changed (`test/repository_test.dart`), 0 on second run.
