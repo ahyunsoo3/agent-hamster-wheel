@@ -158,3 +158,27 @@ Started a third engineering review pass after commit `bc1ee0a` was pushed. The g
 
 - Restarted formatting, static analysis, and test verification after adding the one-time FTS repair marker.
 - Verification passed: `dart format lib/database/app_database.dart`, `flutter analyze`, and `flutter test` completed successfully with five passing tests.
+
+## 2026-05-18 — Fourth Review Pass
+
+### Session Restart
+
+Started a fourth engineering review pass after commit `0154325` was pushed. The current branch is expected to include the FTS trigger repair, app lifecycle cleanup, nullable `copyWith` fixes, and one-time FTS rebuild marker. This pass will re-check repository state, inspect the latest database metadata path and related tests, and push any additional corrections only if they are justified.
+
+### Fourth-Pass Findings
+
+- Confirmed the branch was aligned with `origin/result-flutter-gpt-5-5` at the start of this pass, with only this log modified.
+- Reviewed `app_database.dart` and `repository_test.dart`.
+- Found a test coverage gap in the one-time FTS repair marker path: current tests prove insert/update/delete FTS behavior, but they do not prove that a schema-current database with a missing `fts_rebuild_v1` marker repairs stale or missing FTS rows on the next open.
+- Planned fix: add a file-backed repository test that removes the marker and clears FTS rows, closes the database, reopens it, and verifies search works again due to the marker-based rebuild.
+
+### FTS Repair Marker Test
+
+- Added a file-backed repository regression test in `repository_test.dart`.
+- The test inserts a searchable note, manually clears `fts_notes`, deletes the `fts_rebuild_v1` marker, verifies search is stale, closes and reopens the database, then verifies search works again.
+- Technical reasoning: an in-memory database cannot exercise the reopen path, so the test uses a temporary SQLite file and deletes it after the assertion.
+
+### Fourth-Pass Verification Started
+
+- Started formatting, static analysis, and test verification after adding the file-backed FTS repair marker test.
+- Verification passed: `dart format test/repository_test.dart`, `flutter analyze`, and `flutter test` completed successfully with six passing tests.

@@ -1,3 +1,5 @@
+import 'dart:io';
+
 import 'package:drift/native.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:uuid/uuid.dart';
@@ -77,5 +79,45 @@ void main() {
     expect(await notes.searchNotes('updated'), isEmpty);
 
     await db.close();
+  });
+
+  test('missing FTS rebuild marker repairs stale index on reopen', () async {
+    final dir = await Directory.systemTemp.createTemp(
+      'local_first_notes_test_',
+    );
+    final file = File('${dir.path}/notes.sqlite');
+    final id = const Uuid().v4();
+    final now = DateTime.utc(2026, 5, 18, 1);
+
+    var db = AppDatabase(NativeDatabase(file));
+    var notes = NotesLocalRepository(db);
+
+    await notes.upsertNote(
+      Note(
+        id: id,
+        title: 'Repairable search term',
+        content: 'Body',
+        createdAt: now,
+        updatedAt: now,
+        tags: const [],
+        folderId: null,
+      ),
+    );
+    expect(await notes.searchNotes('repairable'), hasLength(1));
+
+    await db.customStatement("DELETE FROM fts_notes;");
+    await db.customStatement(
+      "DELETE FROM app_metadata WHERE key = 'fts_rebuild_v1';",
+    );
+    expect(await notes.searchNotes('repairable'), isEmpty);
+    await db.close();
+
+    db = AppDatabase(NativeDatabase(file));
+    notes = NotesLocalRepository(db);
+
+    expect(await notes.searchNotes('repairable'), hasLength(1));
+
+    await db.close();
+    await dir.delete(recursive: true);
   });
 }
