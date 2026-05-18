@@ -34,4 +34,21 @@ class Folder {
       sortOrder: sortOrder ?? this.sortOrder,
     );
   }
+
+  @override
+  bool operator ==(Object other) =>
+      identical(this, other) ||
+      other is Folder &&
+          id == other.id &&
+          name == other.name &&
+          parentFolderId == other.parentFolderId &&
+          sortOrder == other.sortOrder;
+
+  @override
+  int get hashCode => Object.hash(id, name, parentFolderId, sortOrder);
+
+  @override
+  String toString() =>
+      'Folder(id: $id, name: $name, parentFolderId: $parentFolderId, '
+      'sortOrder: $sortOrder)';
 }

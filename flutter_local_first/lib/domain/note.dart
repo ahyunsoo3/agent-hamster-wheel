@@ -1,5 +1,10 @@
+import 'package:collection/collection.dart';
+
 /// Sentinel used by [Note.copyWith] to distinguish "omitted" from an explicit `null`.
 const _unset = Object();
+
+/// Value equality helper for the [Note.tags] list.
+const _listEq = ListEquality<String>();
 
 /// Domain model for a note. [content] is plain UTF-8 text suitable for Markdown parsers.
 class Note {
@@ -44,4 +49,32 @@ class Note {
           : folderId as String?,
     );
   }
+
+  @override
+  bool operator ==(Object other) =>
+      identical(this, other) ||
+      other is Note &&
+          id == other.id &&
+          title == other.title &&
+          content == other.content &&
+          createdAt == other.createdAt &&
+          updatedAt == other.updatedAt &&
+          _listEq.equals(tags, other.tags) &&
+          folderId == other.folderId;
+
+  @override
+  int get hashCode => Object.hash(
+    id,
+    title,
+    content,
+    createdAt,
+    updatedAt,
+    _listEq.hash(tags),
+    folderId,
+  );
+
+  @override
+  String toString() =>
+      'Note(id: $id, title: $title, folderId: $folderId, '
+      'tags: $tags, updatedAt: $updatedAt)';
 }

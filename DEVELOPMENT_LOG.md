@@ -524,3 +524,38 @@ A thorough line-by-line review of the full codebase surfaced no new bugs, correc
 ### Fifteenth-Pass Conclusion
 
 No implementation changes are warranted. The codebase is clean, well-tested (19 passing tests across all layers), correctly formatted, and has no outstanding issues. This pass is recorded to maintain traceability of the review cycle.
+
+## 2026-05-18 — Sixteenth Review Pass
+
+### Session Restart
+
+Started a sixteenth engineering review pass. Full re-read of all source files completed. Standard quality gates confirmed: `flutter analyze` found no issues, all 19 tests pass, and `dart format` reports zero changes needed.
+
+### Issue Found: `Note` and `Folder` are value objects without value equality
+
+- **Files:** `lib/domain/note.dart`, `lib/domain/folder.dart`.
+- **Root cause:** Both `Note` and `Folder` are immutable domain models with `const` constructors, representing pure value objects. Neither overrides `operator ==` or `hashCode`. The default `Object` identity equality means two structurally identical `Note` instances (e.g., produced by re-mapping the same database row on consecutive stream emissions) compare as unequal. This has two concrete consequences:
+  1. Any deduplication or change-detection layer above (e.g., future `Equatable` mixin usage, `Set<Note>`, or reactive stream operators like `distinctUnique`) cannot function correctly.
+  2. Widget equality checks based on note identity — such as a `const` key strategy or `ValueKey(note)` — will always see changes even when data is unchanged.
+- **Fix:** Implement `operator ==` and `hashCode` on both `Note` and `Folder` using all persistent fields. For `Note`, the tag list is compared by value using `const ListEquality` from `package:collection` (already a transitive dependency through Drift). For `Folder`, all four fields are included.
+- **Note:** `toString()` overrides are also added to both models to provide readable debug representations, consistent with value-object semantics.
+
+### Fix: Value equality for `Note` and `Folder`
+
+- Added `operator ==` and `hashCode` to `Note`. All seven fields participate in equality. The `tags` list is compared with `ListEquality<String>` from `package:collection`, which provides element-by-element ordering-sensitive comparison. `Object.hash` is used for the hash combining seven fields including `_listEq.hash(tags)`.
+- Added `operator ==` and `hashCode` to `Folder`. All four fields participate.
+- Added `toString()` overrides to both models, providing readable representations for debug output and test failure messages.
+- Added `collection: ^1.18.0` to `dependencies` in `pubspec.yaml` since `Note` directly imports `package:collection/collection.dart` in production code.
+
+### Test Coverage: Domain Equality
+
+- Extended `test/domain_copy_with_test.dart` with two new groups: `Note equality` (6 tests) and `Folder equality` (4 tests).
+- `Note equality` tests cover: self-equality, structural equality with matching `hashCode`, inequality on `id`, inequality on different-length `tags`, inequality on tag-order difference (confirming list ordering is preserved in equality), and inequality on `folderId` presence.
+- `Folder equality` tests cover: self-equality, structural equality with matching `hashCode`, inequality on `sortOrder`, and inequality on `parentFolderId` presence.
+
+### Sixteenth-Pass Verification
+
+- `dart format lib/domain/note.dart lib/domain/folder.dart test/domain_copy_with_test.dart` — one file changed (`note.dart` after formatter adjustment).
+- First `flutter analyze` pass found one issue: `depend_on_referenced_packages` for `package:collection`. Fixed by adding `collection: ^1.18.0` to `pubspec.yaml` dependencies.
+- Second `flutter analyze` pass: no issues.
+- `flutter test` completed successfully with all 29 tests passing: 16 domain (6 copyWith + 10 equality), 3 repository, 9 FTS query, 1 widget.

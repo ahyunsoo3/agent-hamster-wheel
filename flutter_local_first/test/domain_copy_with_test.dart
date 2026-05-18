@@ -45,4 +45,86 @@ void main() {
       expect(base.copyWith(parentFolderId: 'p2').parentFolderId, 'p2');
     });
   });
+
+  group('Note equality', () {
+    final a = Note(
+      id: 'n1',
+      title: 'Title',
+      content: 'Body',
+      createdAt: now,
+      updatedAt: now,
+      tags: const ['a', 'b'],
+      folderId: 'f1',
+    );
+
+    test('identical instances are equal', () {
+      // ignore: unrelated_type_equality_checks — intentional self-check
+      expect(a == a, isTrue);
+    });
+
+    test('structurally identical instances are equal', () {
+      final b = Note(
+        id: 'n1',
+        title: 'Title',
+        content: 'Body',
+        createdAt: now,
+        updatedAt: now,
+        tags: const ['a', 'b'],
+        folderId: 'f1',
+      );
+      expect(a, equals(b));
+      expect(a.hashCode, b.hashCode);
+    });
+
+    test('different id produces inequality', () {
+      expect(a, isNot(equals(a.copyWith(id: 'n2'))));
+    });
+
+    test('different tag list produces inequality', () {
+      expect(a, isNot(equals(a.copyWith(tags: const ['a']))));
+    });
+
+    test('different tag order produces inequality', () {
+      // Tags are stored in the order provided; order matters for equality.
+      final reversed = a.copyWith(tags: const ['b', 'a']);
+      expect(a, isNot(equals(reversed)));
+    });
+
+    test('null folderId vs non-null produces inequality', () {
+      expect(a, isNot(equals(a.copyWith(folderId: null))));
+    });
+  });
+
+  group('Folder equality', () {
+    const a = Folder(
+      id: 'f1',
+      name: 'Work',
+      parentFolderId: 'p1',
+      sortOrder: 3,
+    );
+
+    test('identical instances are equal', () {
+      // ignore: unrelated_type_equality_checks — intentional self-check
+      expect(a == a, isTrue);
+    });
+
+    test('structurally identical instances are equal', () {
+      const b = Folder(
+        id: 'f1',
+        name: 'Work',
+        parentFolderId: 'p1',
+        sortOrder: 3,
+      );
+      expect(a, equals(b));
+      expect(a.hashCode, b.hashCode);
+    });
+
+    test('different sortOrder produces inequality', () {
+      expect(a, isNot(equals(a.copyWith(sortOrder: 99))));
+    });
+
+    test('null parentFolderId vs non-null produces inequality', () {
+      expect(a, isNot(equals(a.copyWith(parentFolderId: null))));
+    });
+  });
 }
