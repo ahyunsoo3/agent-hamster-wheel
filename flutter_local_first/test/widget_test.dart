@@ -9,15 +9,17 @@ void main() {
   testWidgets('LocalFirstNotesApp shell builds', (tester) async {
     final db = AppDatabase(NativeDatabase.memory());
 
-    await tester.pumpWidget(LocalFirstNotesApp(database: db));
-    await tester.pump();
+    try {
+      await tester.pumpWidget(LocalFirstNotesApp(database: db));
+      await tester.pump();
 
-    expect(find.text('Notes & folders'), findsOneWidget);
-    expect(find.text('Notes'), findsOneWidget);
-    expect(find.text('Folders'), findsOneWidget);
-    expect(find.text('No notes yet'), findsOneWidget);
-
-    await tester.pumpWidget(const SizedBox.shrink());
-    await tester.pump(const Duration(milliseconds: 1));
+      expect(find.text('Notes & folders'), findsOneWidget);
+      expect(find.text('Notes'), findsOneWidget);
+      expect(find.text('Folders'), findsOneWidget);
+      expect(find.text('No notes yet'), findsOneWidget);
+    } finally {
+      await tester.pumpWidget(const SizedBox.shrink());
+      await tester.pump(const Duration(milliseconds: 1));
+    }
   });
 }

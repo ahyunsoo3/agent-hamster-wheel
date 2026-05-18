@@ -206,3 +206,27 @@ Started a fifth engineering review pass after commit `37d9bf4` was pushed. The r
 
 - Started formatting, static analysis, and test verification after hardening the file-backed test cleanup path.
 - Verification passed: `dart format test/repository_test.dart`, `flutter analyze`, and `flutter test` completed successfully with six passing tests.
+
+## 2026-05-18 — Sixth Review Pass
+
+### Session Restart
+
+Started a sixth engineering review pass after commit `fee4f62` was pushed. The repository is expected to include hardened file-backed test cleanup, one-time FTS rebuild repair, app lifecycle cleanup, and nullable domain copy fixes. This pass will re-check the current branch state and perform a focused sweep for remaining correctness, refactoring, or optimization opportunities.
+
+### Sixth-Pass Findings
+
+- Confirmed the branch was aligned with `origin/result-flutter-gpt-5-5` at the start of this pass, with only this log modified.
+- Reviewed `app.dart`, `domain/note.dart`, `domain/folder.dart`, `domain_copy_with_test.dart`, and `widget_test.dart`.
+- Found a test robustness issue in `widget_test.dart`: the test relies on the success path reaching the explicit `SizedBox.shrink()` unmount so `LocalFirstNotesApp.dispose` closes the in-memory database. Root cause: the unmount and fake-time drain are not in a `finally` block, so an assertion failure before teardown could leave app/database resources active.
+- Planned fix: wrap the widget smoke test assertions in `try/finally` and always unmount the app plus pump fake time to drain Drift stream cleanup timers.
+
+### Widget Test Cleanup Fix
+
+- Updated `widget_test.dart` so the real app shell is pumped and asserted inside a `try` block.
+- Moved the `SizedBox.shrink()` unmount and positive-duration pump into `finally`, ensuring `LocalFirstNotesApp.dispose` runs and Drift cleanup timers drain even if an assertion fails.
+- Technical reasoning: the widget test owns the injected in-memory database through the app root, so teardown must be failure-safe to avoid resource leaks and pending fake-async timers.
+
+### Sixth-Pass Verification Started
+
+- Started formatting, static analysis, and test verification after hardening widget-test cleanup.
+- Verification passed: `dart format test/widget_test.dart`, `flutter analyze`, and `flutter test` completed successfully with six passing tests.
