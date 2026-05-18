@@ -399,3 +399,41 @@ Full re-read of all 13 source files and 4 test files completed. Quality gates co
 - `flutter analyze`: no issues.
 - `dart format`: 1 file changed (`test/repository_test.dart`), 0 on second run.
 - `flutter test --reporter expanded`: all 37 tests pass (35 prior + 2 new folder repository tests).
+
+---
+
+## 2026-05-18 — Tenth Review Pass
+
+### Session Restart
+
+Full re-read of all 13 source files and 4 test files completed. Quality gates confirmed clean: `flutter analyze` no issues, 37/37 tests pass, `dart format` zero changes.
+
+### Issues Found
+
+#### Issue 1 — `_installFts5` places `CREATE VIRTUAL TABLE` inside a transaction, risking failure on production SQLite
+
+- **File:** `lib/database/app_database.dart`.
+- **Root cause:** The ninth pass consolidated all 8 DDL statements — including `CREATE VIRTUAL TABLE IF NOT EXISTS fts_notes` — into a single `db.transaction()` block. However, the SQLite documentation specifies that `CREATE VIRTUAL TABLE` is not allowed inside a transaction in certain configurations (e.g., WAL journal mode with `SQLITE_DBCONFIG_DQS_DDL` restrictions, or on some embedded platforms). While the in-memory SQLite used in tests accepts this, a production device running the app against a file-backed WAL-mode database may fail with `"cannot start a transaction within a transaction"` or `"CREATE VIRTUAL TABLE cannot be used within a transaction"`. The Fourth-pass documentation explicitly called this out and kept the virtual-table creation outside the transaction. The safest correct structure is: the two `CREATE ... IF NOT EXISTS` statements run as separate implicit transactions first (two fsyncs), then the six trigger DDL statements run in one explicit transaction (one fsync) — matching the Fourth-pass design.
+- **Fix:** Move `CREATE TABLE IF NOT EXISTS app_metadata` and `CREATE VIRTUAL TABLE IF NOT EXISTS fts_notes` back outside the `db.transaction()` block. The trigger `DROP`/`CREATE` statements remain inside the transaction.
+
+#### Issue 2 — `searchNotes` and `watchSearchResults` duplicate the FTS5 SQL query string verbatim
+
+- **File:** `lib/data/local_repositories.dart`.
+- **Root cause:** Both `searchNotes` and `watchSearchResults` contain an identical 7-line SQL `SELECT ... FROM notes ... INNER JOIN fts_notes ... WHERE fts_notes MATCH ? ORDER BY bm25(fts_notes)` string. Any change to the query — adding a column, changing the join condition, adjusting the sort — must be made in two places with no compile-time verification that they remain in sync. This is the classic "shotgun surgery" code smell.
+- **Fix:** Extract the SQL string to a private top-level constant `_kFtsSearchSql`. Both methods reference the constant, ensuring they always run the same query.
+
+### Fixes Applied
+
+#### `lib/database/app_database.dart`
+
+- Restored the split DDL structure in `_installFts5`: `CREATE TABLE IF NOT EXISTS app_metadata` and `CREATE VIRTUAL TABLE IF NOT EXISTS fts_notes` are issued as standalone `customStatement` calls outside the explicit transaction; the 6 trigger `DROP`/`CREATE` statements remain inside `db.transaction()`. This matches the Fourth-pass design and is safe on all SQLite configurations. Updated the comment to accurately describe the structure.
+
+#### `lib/data/local_repositories.dart`
+
+- Extracted the repeated FTS5 SELECT query to a private top-level constant `_kFtsSearchSql`. Both `searchNotes` and `watchSearchResults` reference this constant, eliminating the duplication and ensuring the two code paths can never silently diverge.
+
+### Tenth-Pass Verification
+
+- `flutter analyze`: no issues.
+- `dart format`: formatter applied; files changed noted below.
+- `flutter test --reporter expanded`: all 37 tests pass.

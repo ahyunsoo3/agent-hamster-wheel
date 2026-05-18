@@ -57,6 +57,23 @@ List<Note> _notesFromSearchRows(List<QueryRow> rows, List<NoteTagRow> tagRows) {
       .toList(growable: false);
 }
 
+/// Shared FTS5 search query used by both [NotesLocalRepository.searchNotes]
+/// and [NotesLocalRepository.watchSearchResults]. Keeping a single source of
+/// truth prevents the two paths from silently diverging if the query changes.
+const _kFtsSearchSql = '''
+SELECT
+  n.id AS id,
+  n.title AS title,
+  n.content AS content,
+  n.created_at AS created_at,
+  n.updated_at AS updated_at,
+  n.folder_id AS folder_id
+FROM notes AS n
+INNER JOIN fts_notes ON fts_notes.rowid = n.rowid
+WHERE fts_notes MATCH ?
+ORDER BY bm25(fts_notes)
+''';
+
 /// Escapes a user token for safe FTS5 prefix search (`token*`).
 ///
 /// Each whitespace-separated word is wrapped in double-quoted FTS5 phrase
@@ -106,19 +123,7 @@ class NotesLocalRepository {
 
     final rows = await _db
         .customSelect(
-          '''
-SELECT
-  n.id AS id,
-  n.title AS title,
-  n.content AS content,
-  n.created_at AS created_at,
-  n.updated_at AS updated_at,
-  n.folder_id AS folder_id
-FROM notes AS n
-INNER JOIN fts_notes ON fts_notes.rowid = n.rowid
-WHERE fts_notes MATCH ?
-ORDER BY bm25(fts_notes)
-''',
+          _kFtsSearchSql,
           variables: [Variable.withString(fts)],
           readsFrom: {_db.notes},
         )
@@ -142,19 +147,7 @@ ORDER BY bm25(fts_notes)
 
     return _db
         .customSelect(
-          '''
-SELECT
-  n.id AS id,
-  n.title AS title,
-  n.content AS content,
-  n.created_at AS created_at,
-  n.updated_at AS updated_at,
-  n.folder_id AS folder_id
-FROM notes AS n
-INNER JOIN fts_notes ON fts_notes.rowid = n.rowid
-WHERE fts_notes MATCH ?
-ORDER BY bm25(fts_notes)
-''',
+          _kFtsSearchSql,
           variables: [Variable.withString(fts)],
           readsFrom: {_db.notes, _db.noteTags},
         )
