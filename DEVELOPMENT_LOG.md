@@ -498,3 +498,29 @@ Started a fourteenth engineering review pass. All source files were re-read and 
 - `dart format lib/app.dart lib/database/app_database.dart` — no formatting changes required.
 - `flutter analyze` — no issues found.
 - `flutter test` — all 19 tests passed.
+
+## 2026-05-18 — Fifteenth Review Pass
+
+### Session Restart
+
+Started a fifteenth engineering review pass. Full re-read of every source file completed before making any judgements: `app_database.dart`, `app.dart`, `local_repositories.dart`, `note.dart`, `folder.dart`, `tables.dart`, `bootstrap.dart`, `pubspec.yaml`, `analysis_options.yaml`, and all four test files.
+
+### Pre-work Verification
+
+Standard quality gates run first: `flutter analyze` found no issues; all 19 tests passed across `domain_copy_with_test.dart` (6), `repository_test.dart` (3), `fts_query_test.dart` (9), and `widget_test.dart` (1). `dart format --set-exit-if-changed lib/ test/` reported zero files changed. `grep` across all Dart files found no `TODO`, `FIXME`, `HACK`, `XXX`, `TEMP`, or `print(` markers.
+
+### Findings
+
+A thorough line-by-line review of the full codebase surfaced no new bugs, correctness issues, refactoring opportunities, or optimization candidates that are not already addressed. Specific areas verified without finding issues:
+
+- **`_unset` sentinels in `note.dart` and `folder.dart`**: `const _unset = Object()` is valid Dart — `Object()` has a `const` constructor and the analyzer confirms no issue. The `identical` comparison within each file correctly uses the file-local sentinel instance.
+- **`_installFts5` transaction boundary**: The trigger transaction wraps only DDL, which SQLite supports in explicit transactions. The `CREATE TABLE IF NOT EXISTS app_metadata` and `CREATE VIRTUAL TABLE IF NOT EXISTS fts_notes` statements outside the transaction are correct because certain SQLite platforms restrict virtual table DDL inside nested transactions.
+- **`fts5PrefixQuery` FTS5 compliance**: Confirmed that `"token"*` is the correct FTS5 prefix syntax, `""` is the only escape needed inside a double-quoted FTS5 phrase, and bound parameters bypass all SQL-level escaping concerns.
+- **`watchNotes` `combineLatest2` usage**: Correctly combines notes and tags streams; using `rxdart` here is appropriate since Drift's built-in watch only tracks one table at a time.
+- **`upsertNote` transaction correctness**: Delete-then-batch-insert for tags inside a transaction is correct; avoids partial tag updates visible to readers between the delete and the re-insert.
+- **`pubspec.yaml` dependency graph**: `path` is correctly in `dev_dependencies`; all runtime dependencies are justified.
+- **`analysis_options.yaml`**: `prefer_single_quotes` and `avoid_print` are correctly enabled and enforced throughout the codebase.
+
+### Fifteenth-Pass Conclusion
+
+No implementation changes are warranted. The codebase is clean, well-tested (19 passing tests across all layers), correctly formatted, and has no outstanding issues. This pass is recorded to maintain traceability of the review cycle.
