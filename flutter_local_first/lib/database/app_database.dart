@@ -30,12 +30,18 @@ class AppDatabase extends _$AppDatabase {
     },
     beforeOpen: (details) async {
       await customStatement('PRAGMA foreign_keys = ON;');
-      await _installFts5(this);
+      await _installFts5(
+        this,
+        rebuild: details.wasCreated || details.hadUpgrade,
+      );
     },
   );
 
   /// FTS5 external-content index + triggers keep title/content searchable on the IO thread.
-  static Future<void> _installFts5(GeneratedDatabase db) async {
+  static Future<void> _installFts5(
+    GeneratedDatabase db, {
+    required bool rebuild,
+  }) async {
     await db.customStatement('''
 CREATE VIRTUAL TABLE IF NOT EXISTS fts_notes USING fts5(
   title,
@@ -45,9 +51,28 @@ CREATE VIRTUAL TABLE IF NOT EXISTS fts_notes USING fts5(
 );
 ''');
 
-    await db.customStatement(
-      "INSERT INTO fts_notes(fts_notes) VALUES ('rebuild');",
-    );
+    await db.customStatement('''
+CREATE TABLE IF NOT EXISTS app_metadata(
+  key TEXT NOT NULL PRIMARY KEY,
+  value TEXT NOT NULL
+);
+''');
+
+    final rebuildRows = await db
+        .customSelect(
+          "SELECT value FROM app_metadata WHERE key = 'fts_rebuild_v1';",
+        )
+        .get();
+
+    if (rebuild || rebuildRows.isEmpty) {
+      await db.customStatement(
+        "INSERT INTO fts_notes(fts_notes) VALUES ('rebuild');",
+      );
+      await db.customStatement('''
+INSERT OR REPLACE INTO app_metadata(key, value)
+VALUES ('fts_rebuild_v1', 'complete');
+''');
+    }
 
     for (final trigger in ['notes_ai', 'notes_ad', 'notes_au']) {
       await db.customStatement('DROP TRIGGER IF EXISTS $trigger;');

@@ -116,3 +116,45 @@ Started a follow-up engineering pass after commit `e308ab1` was pushed. The imme
 
 - Restarted formatting, analyzer, and full test verification after the positive-duration teardown pump.
 - Verification passed: `dart format` reported no further changes, `flutter analyze` found no issues, and `flutter test` passed all five tests.
+
+## 2026-05-18 — Third Review Pass
+
+### Session Restart
+
+Started a third engineering review pass after commit `bc1ee0a` was pushed. The goals are to confirm the repository is clean, inspect remaining database/repository behavior for correctness and optimization opportunities, document each finding before acting, and push any additional improvements with the finalized log.
+
+### Third-Pass Findings
+
+- Confirmed the branch was aligned with `origin/result-flutter-gpt-5-5` at the start of this pass, with only this log modified.
+- Reviewed `local_repositories.dart`, `tables.dart`, `repository_test.dart`, and `app_database.dart`.
+- Found a startup performance issue in `AppDatabase._installFts5`: the FTS5 `rebuild` command runs on every database open. Root cause: the prior repair path optimized for correctness by unconditionally repopulating the index from `notes`, but that turns app startup into O(number of notes) work even when the FTS index is already current.
+- Planned fix: keep virtual table and trigger installation idempotent on every open, but run the full FTS rebuild only when Drift reports the database was newly created or upgraded.
+
+### FTS Startup Optimization
+
+- Updated `AppDatabase.migration.beforeOpen` to pass `rebuild: details.wasCreated || details.hadUpgrade` into `_installFts5`.
+- Updated `_installFts5` to accept a required `rebuild` flag and run the expensive FTS5 `rebuild` command only when that flag is true.
+- Kept virtual table creation and trigger recreation on every open because those operations are idempotent and cheap compared with rebuilding the entire search index.
+- Expected performance gain: normal app opens now avoid an O(number of notes) FTS index rebuild and only perform constant-size schema/trigger repair work. Fresh installs and migrations still rebuild the index to preserve correctness.
+
+### Third-Pass Verification Started
+
+- Started formatting, static analysis, and test verification after the conditional FTS rebuild change.
+- Verification passed: `dart format lib/database/app_database.dart`, `flutter analyze`, and `flutter test` all completed successfully with five passing tests.
+
+### Optimization Correction
+
+- During final diff review, identified a correctness gap in the creation/upgrade-only rebuild condition: a schema-current database with existing notes but missing or stale FTS rows would skip the one-time repair because Drift would report neither creation nor upgrade.
+- Revised plan: create a tiny app-owned `app_metadata` table and store an `fts_rebuild_v1` marker after a successful rebuild. The app will rebuild on fresh installs, migrations, or when that marker is absent, then skip rebuilds on later normal opens.
+- Technical reasoning: this preserves the startup optimization while still repairing existing databases exactly once for this FTS maintenance version.
+
+### One-Time FTS Repair Marker
+
+- Added `app_metadata` creation inside `_installFts5` and read the `fts_rebuild_v1` marker before deciding whether to run the FTS5 rebuild.
+- Updated rebuild logic to run when Drift reports database creation/upgrade or when the marker is absent, then store `fts_rebuild_v1 = complete` after rebuilding.
+- Current state: FTS virtual table and trigger repair still run on every open; full index rebuild runs only for fresh installs, migrations, or databases not yet marked as repaired.
+
+### Third-Pass Verification Restarted
+
+- Restarted formatting, static analysis, and test verification after adding the one-time FTS repair marker.
+- Verification passed: `dart format lib/database/app_database.dart`, `flutter analyze`, and `flutter test` completed successfully with five passing tests.
