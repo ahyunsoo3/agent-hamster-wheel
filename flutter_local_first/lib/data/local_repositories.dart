@@ -91,14 +91,16 @@ Future<List<Note>> _hydrateNotesFromFtsRows(
   return rows
       .map((r) {
         final id = r.read<String>('id');
-        return Note(
-          id: id,
-          title: r.read<String>('title'),
-          content: r.read<String>('content'),
-          createdAt: r.read<DateTime>('created_at'),
-          updatedAt: r.read<DateTime>('updated_at'),
-          tags: List.unmodifiable(List<String>.from(byNote[id] ?? const [])),
-          folderId: r.readNullable<String>('folder_id'),
+        return _noteFromRow(
+          NoteRow(
+            id: id,
+            title: r.read<String>('title'),
+            content: r.read<String>('content'),
+            createdAt: r.read<DateTime>('created_at'),
+            updatedAt: r.read<DateTime>('updated_at'),
+            folderId: r.readNullable<String>('folder_id'),
+          ),
+          List<String>.from(byNote[id] ?? const []),
         );
       })
       .toList(growable: false);

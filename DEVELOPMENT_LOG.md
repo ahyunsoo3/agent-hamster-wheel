@@ -286,4 +286,36 @@ No additional hot paths identified; keystroke optimizations from prior sessions 
 
 ---
 
+## 2026-05-18 — Session: verification, FTS hydration DRY mapping
+
+### Actions completed
+
+1. Ran **`flutter pub get`**, **`flutter analyze`**, and **`flutter test`** under **`flutter_local_first/`** — baseline clean before edits (no analyzer findings; 5 tests passing).
+2. Reviewed **`app.dart`** (tab streams, FTS gating), **`local_repositories.dart`** (combineLatest, FTS watch/read paths), **`app_database.dart`** (migrations + FTS install), **`bootstrap.dart`**, and tests for parity with prior issue narratives (**#1–#8**).
+3. Refactored FTS result hydration to reuse the same domain mapper as table-backed reads (see below).
+4. Re-ran **`flutter analyze`** / **`flutter test`** after the change — still clean.
+
+### Issue resolution
+
+No new runtime or analyzer defects were observed relative to the fixes already documented above. This pass did not alter user-visible behavior.
+
+### Refactoring
+
+**`flutter_local_first/lib/data/local_repositories.dart` — `_hydrateNotesFromFtsRows`**
+
+- **Change:** Build a Drift **`NoteRow`** from each **`QueryRow`** and return **`_noteFromRow(row, tags)`** instead of constructing **`Note`** inline with duplicated field reads.
+- **Reasoning:** **`_noteFromRow`** is the single place that defines **`List.unmodifiable`** tags and maps persistence columns to **`Note`**; FTS search and **`watchNotes`** could otherwise drift (e.g., future columns or tag semantics) if only one path were updated.
+
+### Optimization
+
+- **Trade-off:** Each FTS hit allocates a short-lived **`NoteRow`** where the previous code inlined **`Note`** construction — negligible versus SQLite and hydration I/O; the win is **lower long-term defect rate** from one mapping path, not raw throughput.
+- **Benchmarks:** Not run; expectations unchanged for interactive search.
+
+### Current state
+
+- Package **`local_first_notes`**: **`flutter analyze`** reports no issues; **`flutter test`** passes (repository + widget).
+- **`DEVELOPMENT_LOG.md`**: session appended; prior issues **#1–#8** remain the canonical bug history.
+
+---
+
 _This log is the running record for **agent-hamster-wheel**; append new dated sections per session._
